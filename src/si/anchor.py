@@ -15,9 +15,12 @@ import hashlib
 import json
 import logging
 from pathlib import Path
-from typing import Callable
+from typing import Callable, TYPE_CHECKING
 
 from si.contracts import Anchor, AnchorResult, Branch
+
+if TYPE_CHECKING:
+    from si.llm import GemmaLLM
 
 log = logging.getLogger(__name__)
 
@@ -99,15 +102,39 @@ def write_anchor_log(path: Path, result: AnchorResult) -> None:
 
 
 def humaneval_plus_runner(branch: Branch) -> float:
-    """Run EvalPlus HumanEval+ against the branch's model checkpoint.
+    """Run HumanEval+ against the branch's model checkpoint.
 
-    See docs/04-implementation.md §1.4 for the shell command — this function
-    should exec EvalPlus's `run_evalplus.sh` and parse the pass@1 score.
+    This is a factory-style stub: the real runner closes over a loaded GemmaLLM
+    that knows about the branch's LoRA adapter. Use :func:`make_humaneval_runner`
+    below at the Phase 1 wire-up site.
     """
     raise NotImplementedError(
-        "Phase 1. Invoke evaluation/code_eval/scripts/run_evalplus.sh from AZR, "
-        "or call evalplus.evaluate.evaluate() directly; parse pass@1 from output JSON."
+        "Phase 1. Use make_humaneval_runner(llm) from si.anchor instead — this "
+        "stub exists to satisfy docs/01 and is replaced at runtime."
     )
+
+
+def make_humaneval_runner(
+    llm: "GemmaLLM",
+    *,
+    max_problems: int | None = None,
+    timeout_s: float = 10.0,
+) -> "BenchmarkRunner":
+    """Build a branch-runner closed over a loaded GemmaLLM.
+
+    Per-branch LoRA is the caller's concern — they load the adapter onto `llm`
+    before running this. For Phase 1 single-branch, the base model is the only
+    one loaded and the runner is invoked directly.
+    """
+    from si.humaneval import humaneval_plus_pass_at_1  # local import keeps anchor importable w/o deps
+
+    def _runner(_branch: Branch) -> float:
+        result = humaneval_plus_pass_at_1(
+            llm, max_problems=max_problems, timeout_s=timeout_s
+        )
+        return result.pass_at_1
+
+    return _runner
 
 
 def livecodebench_runner(branch: Branch) -> float:

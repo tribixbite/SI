@@ -66,33 +66,35 @@ fi
 # shellcheck disable=SC1091
 source "${SI_ROOT}/.venv/bin/activate"
 
-echo "Installing core dependencies..."
-uv pip install torch==2.4.* --index-url https://download.pytorch.org/whl/cu124
-uv pip install "vllm>=0.8.0,<0.9"
-uv pip install "transformers>=4.46,<4.50"
-uv pip install peft accelerate datasets "ray[default]"
-uv pip install wandb rich typer pydantic pytest
+echo "Installing AZR's pinned requirements (authoritative for torch/vllm/transformers versions)..."
+# AZR's requirements.txt is a full freeze; installing it first pins the whole stack.
+# Later installs use --no-deps to avoid clobbering these versions.
+uv pip install -r "${SI_DEPS}/Absolute-Zero-Reasoner/requirements.txt"
 
-echo "Installing verl from source..."
-uv pip install -e "${SI_DEPS}/verl"
+echo "Installing verl from source (no-deps: keep AZR pins)..."
+uv pip install -e "${SI_DEPS}/verl" --no-deps
 
-echo "Installing SI (this repo) in editable mode..."
-uv pip install -e "${SI_ROOT}"
+echo "Installing SI (this repo) in editable mode (no-deps)..."
+uv pip install -e "${SI_ROOT}" --no-deps
 
-echo "Installing EvalPlus at pinned commit (matches AZR)..."
-uv pip install --upgrade \
-    "evalplus[vllm] @ git+https://github.com/evalplus/evalplus@d362e933265c3e7e3df8101c930a89c3c470cd9f"
+echo "Installing EvalPlus at pinned commit (no-deps to preserve torch/vllm pins)..."
+uv pip install --no-deps \
+    "evalplus @ git+https://github.com/evalplus/evalplus@d362e933265c3e7e3df8101c930a89c3c470cd9f"
+
+echo "Installing SI dev extras..."
+uv pip install pytest pytest-asyncio ruff mypy rich typer
 
 # --- Sandbox -----------------------------------------------------------------
 
 if command -v docker >/dev/null 2>&1; then
-    echo "Starting sandboxfusion container (if not already running)..."
-    docker ps --format '{{.Names}}' | grep -q '^si-sandbox$' || \
-        docker run -d --name si-sandbox \
-            --cpus=2 --memory=2g --pids-limit=256 \
-            -p 8765:8765 \
-            sandboxfusion/sandbox:latest || \
-        echo "  WARN: sandboxfusion image may not be public; see AZR docs for alternatives."
+    # AZR spawns sandbox-fusion containers programmatically with dynamic host ports
+    # (see absolute_zero_reasoner/utils/code_utils/sandboxfusion_executor.py).
+    # We only need the image pre-pulled locally.
+    SANDBOX_IMAGE="volcengine/sandbox-fusion:server-20250609"
+    echo "Pre-pulling sandbox-fusion image (${SANDBOX_IMAGE})..."
+    docker image inspect "${SANDBOX_IMAGE}" >/dev/null 2>&1 || \
+        docker pull "${SANDBOX_IMAGE}" || \
+        echo "  WARN: pull failed; AZR will attempt to pull at runtime." >&2
 else
     echo "WARN: Docker not found. Install Docker before running Phase 1." >&2
 fi

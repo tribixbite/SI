@@ -57,14 +57,15 @@ print("  OK")
 PY
 echo
 
-# --- 3. Sandbox is up and accepts code ---------------------------------------
+# --- 3. Sandbox image is pulled (AZR will launch container at runtime) -------
 
-echo "[3/4] sandbox check"
-if curl -sf -o /dev/null http://localhost:8765/health 2>/dev/null; then
-    echo "  OK (sandboxfusion responding on :8765)"
+echo "[3/4] sandbox image check"
+SANDBOX_IMAGE="volcengine/sandbox-fusion:server-20250609"
+if docker image inspect "${SANDBOX_IMAGE}" >/dev/null 2>&1; then
+    echo "  OK (${SANDBOX_IMAGE} present locally)"
 else
-    echo "  WARN: sandbox not responding on :8765. Phase 1 will fail." >&2
-    echo "        Start with: docker start si-sandbox"
+    echo "  WARN: ${SANDBOX_IMAGE} not pulled; AZR will pull at runtime (slow first run)." >&2
+    echo "        Pre-pull with: docker pull ${SANDBOX_IMAGE}"
 fi
 echo
 
