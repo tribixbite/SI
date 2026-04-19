@@ -58,8 +58,8 @@ class UnslothTrainerConfig:
     weight_decay: float = 0.001
     warmup_ratio: float = 0.1
     per_device_train_batch_size: int = 1
-    gradient_accumulation_steps: int = 4
-    num_generations: int = 4  # group size; generation_batch_size = bs*grad_accum must be divisible
+    gradient_accumulation_steps: int = 2
+    num_generations: int = 2  # small group; higher values OOM on 3090 with Gemma 4 E4B
     max_steps: int = -1  # -1 means use num_train_epochs
     epochs: int = 1
     beta: float = 0.001  # KL coefficient (TRL 1.2 uses beta, not epsilon/delta)

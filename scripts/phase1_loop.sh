@@ -24,6 +24,8 @@ PROPOSALS_PER_TYPE="${4:-8}"
 : "${SI_ROOT:=/home/matilda/git/SI}"
 : "${SI_MODEL_PATH:=${SI_ROOT}/cache/gemma-4-E4B-hf}"
 export SI_ROOT SI_MODEL_PATH
+# Reduce OOM risk during GRPO on 3090 by letting allocator expand segments.
+export PYTORCH_ALLOC_CONF="${PYTORCH_ALLOC_CONF:-expandable_segments:True}"
 
 # Reproducibility gate: no uncommitted code/config changes mid-run.
 if ! git -C "${SI_ROOT}" diff --quiet configs/ src/si/; then
