@@ -1,0 +1,76 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.installed.cfg
+MANIFEST
+
+# Virtualenvs
+.venv/
+venv/
+env/
+.env
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Test / coverage
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# ML training artifacts
+wandb/
+runs/
+checkpoints/
+*.ckpt
+*.pt
+*.pth
+*.safetensors
+*.bin
+*.gguf
+
+# Model downloads (should live in $SI_CACHE, not here)
+cache/
+models/
+deps/
+
+# Rollout traces and experience buffers — huge and regenerable
+traces/
+experience/
+matches.jsonl
+proposals.jsonl
+
+# Anchor evaluation outputs (regenerable, but keep VERSIONS.lock)
+anchor_results/
+!VERSIONS.lock
+
+# Secrets — never commit
+.env.local
+*.key
+*.pem
+wandb_key.txt
+hf_token.txt
+
+# OS
+Thumbs.db
+.DS_Store

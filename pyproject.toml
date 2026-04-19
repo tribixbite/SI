@@ -1,0 +1,85 @@
+[project]
+name = "si"
+version = "0.0.1a0"
+description = "SI — home-scale compounding self-improvement stack (AZR + Elo + Islands + In-Place TTT)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [
+    { name = "SI Contributors" },
+]
+keywords = [
+    "reinforcement-learning",
+    "self-improvement",
+    "llm",
+    "rlvr",
+    "absolute-zero",
+    "evolutionary-algorithms",
+]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "torch>=2.4,<2.7",
+    "transformers>=4.46,<4.50",
+    "peft>=0.13",
+    "accelerate>=1.0",
+    "datasets>=3.0",
+    "vllm>=0.8.0,<0.9",
+    "pydantic>=2.8",
+    "typer>=0.12",
+    "rich>=13.8",
+    "wandb>=0.18",
+    # verl and openevolve are installed from source per docs/01-sources.md;
+    # they're too fast-moving to pin via PyPI for a research stack.
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.7",
+    "mypy>=1.11",
+]
+eval = [
+    # evalplus is pinned at a specific git commit per AZR's setup;
+    # install it separately via scripts/bootstrap.sh.
+]
+
+[project.scripts]
+si = "si.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/YOUR_GH_USER/SI"
+Documentation = "https://github.com/YOUR_GH_USER/SI/tree/main/docs"
+
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/si"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+ignore = ["E501"]  # line length handled by formatter
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

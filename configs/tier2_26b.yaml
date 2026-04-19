@@ -1,0 +1,94 @@
+# Tier 2 config — 5× RTX 3090, Gemma 4 26B-A4B (MoE). Working scale.
+# See docs/02-hardware.md §Tier 2 and docs/04-implementation.md §Phase 2–3.
+
+run_id: tier2_26b_full
+seed: 42
+tier: 2
+max_generations: 500
+
+n_solver_branches: 12
+n_proposer_variants: 4
+
+model:
+  base_model_path: ${SI_CACHE}/gemma-4-26B-A4B-hf
+  dtype: bfloat16
+  gpu_memory_utilization: 0.85
+  use_cache: true
+  max_model_len: 16384
+  trust_remote_code: false
+
+proposer:
+  mc_rollouts: 8
+  temperature: 0.8
+  top_p: 0.95
+  max_new_tokens: 1024
+  proposals_per_generation: 96
+  enable_thinking: false
+  seed_mix_ratio: 0.1
+
+solver:
+  temperature: 0.5
+  top_p: 0.95
+  max_new_tokens: 4096
+  enable_thinking: true
+  n_rollouts_per_task: 1
+
+verifier:
+  backend: firecracker   # production discipline at Tier 2+ (docs/02 §verifier-farm rule)
+  endpoint: http://localhost:8765
+  timeout_s: 5
+  memory_mb: 512
+  cpu_count: 1
+  network_enabled: false
+
+lora:
+  rank: 32
+  alpha: 64
+  dropout: 0.05
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+
+grpo:
+  lr: 1.0e-6
+  kl_coef: 1.0e-3
+  kl_type: low_var_kl
+  clip_range: 0.2
+  group_size: 8
+  ppo_mini_batch_size: 32
+  grad_clip_norm: 1.0
+
+elo:
+  k: 32.0
+  default_rating: 1500.0
+  matches_per_generation_multiplier: 3.0
+  replacement_quartile_size: 0.25
+  mutation_sigma: 0.001
+
+islands:
+  enabled: true
+  n_islands: 4
+  migration_every: 5
+  migrant_experience_priority: 2.0
+  migrant_priority_decay_gens: 1
+
+anchor:
+  primary: humaneval_plus
+  secondary: livecodebench
+  meta: mbpp_plus
+  anchor_every: 10
+  reversion_tolerance: 0.02
+  reversion_strict_after_gen: 50
+
+# In-Place TTT reserved for Phase 4 — enable only after Phase 3 stabilizes.
+ttt:
+  enabled: false
+  target_module_name: mlp.down_proj
+  lr: 1.0e-4
+  chunk_tokens: 256
+  reset_between_problems: true
