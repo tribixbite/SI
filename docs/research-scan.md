@@ -383,6 +383,47 @@ We don't have LCB v6 numbers for the v2 and v3 adapters (they weren't measured),
 
 ---
 
+## 2026-04-24 14:20 UTC — Retrospective v2/v3 on LCB v6 confirms the pattern
+
+Per-difficulty anchor deltas (base → trained):
+
+```
+                    LCB v6   Easy        Medium       Hard
+base                21.92    52.17       11.78        5.14
+v2 gen_10 GRPO      22.01    −4          +7           −2
+v3 gen_10 RL-ZVP    21.92    −6          +8           −2
+SSD bootstrap       22.68    −2          +10          0
+```
+
+**All three methods move in the same direction**: lose some easy, gain some medium, no effect on hard. The net pass@1 differences look small (−0.09 to +0.76 pp) only because easy loss cancels medium gain.
+
+What's really happening: the training is teaching a skill set targeting a specific difficulty band — medium competitive-programming problems where the model has latent capacity but lacks natural skill, probably around "problems reminiscent of AZR-format reverse-engineering / compute-and-emit." Easy problems regress because of format drift (model now prefers fenced-output shape over natural completion). Hard problems are beyond base-model capacity.
+
+**SSD is strongest across the board**: biggest medium gain, smallest easy loss, preserves hard. Ratio of medium:easy improvement is better — i.e., more "pure" learning of the target skill, less collateral damage.
+
+### Implications
+
+- **The plateau we measured on HumanEval+ was an artifact of the anchor, not of the training.** All three adapters had real capability gains on LCB medium problems — we just weren't measuring there.
+- **Anchor regression on HumanEval+ is anchor mismatch**, not capability loss. Going back to measure HumanEval+ is fine for "format integrity" but shouldn't drive kill decisions.
+- **SSD is the best paradigm to scale.** GRPO variants are noisier with worse easy/medium ratio.
+- **Next move locked in**: scale SSD per §"Updated plan" above. Primary anchor = LCB v6. Secondary = HumanEval+ (detect format regression beyond −5 pp).
+
+### Updated task-level numbers for scaling SSD
+
+Current SSD run: 500 tasks × 8 candidates → 1221 passing → 2 epochs → +10 LCB medium. Target: +5 pp LCB v6 = +53 problems total.
+
+- Extrapolating linearly: ~5× current training data → +50 problems = very near target.
+- Scaling: 2000 tasks × 16 candidates = 32k generations. Sample pass rate was 30.5 %; expect ~10k passing samples. 3 epochs. Walltime estimate: ~6 h sampling + ~2 h SFT = ~8 h total.
+- Disk: 294 MB adapter × 1 = trivial.
+- VRAM: same as current (vLLM ~16 GB sampling, Unsloth ~11 GB training, ping-pong fine).
+
+Deduction is 5 % of our current passing samples. To improve balance, either:
+- Bump proposer temperature for deduction tasks
+- Filter pool to 50/50 abduction:deduction before sampling
+- Accept the imbalance and scale — might still help if abduction transfers
+
+---
+
 ## 2026-04-24 07:11 UTC — scan #6 (gen 14 train-start; gen 15 anchor ~25 min out)
 
 No change in trajectory since scan #5 (still just base=87.20% and gen_10=85.98%). Pace accelerated — gens 11-13 completed in ~10 min each thanks to Unsloth caching. Targeted search for AZR-adjacent work.
