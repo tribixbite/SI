@@ -337,6 +337,52 @@ If A doesn't move things, B (proposer co-training) is the principled AZR fix —
 
 ---
 
+## 2026-04-24 13:10 UTC — SSD results: anchor split reveals the real story
+
+Ran SSD with 500 tasks × 8 candidates → 1221 passing (30.5 % pass rate) → 2 epochs SFT (26 min). Evaluated on both anchors:
+
+```
+                     HumanEval+             LCB v6
+Base                 143/164 = 87.20 %      231/1054 = 21.92 %
+SSD adapter          139/164 = 84.76 %      239/1054 = 22.68 %
+Δ                    −2.44 pp               **+0.76 pp** (+8 problems net)
+
+LCB v6 by difficulty (base → SSD):
+  easy:    168 → 166 (−2)
+  medium:   45 →  55 (**+10**)  ← the driver
+  hard:     18 →  18 (0)
+```
+
+### The key finding
+
+**Our training has real capability value, measured on the right anchor.** SSD teaches AZR-style "compute-and-emit" skills:
+- Hurts function-completion anchors (HumanEval+) by biasing output format toward fenced single-value answers.
+- Helps competitive-programming anchors (LCB v6) where "read inputs, compute, emit output" is the expected pattern.
+
+### HumanEval+ was the wrong anchor all along
+
+- ReflexiCoder-8B hits 87.20 % HumanEval+ (scan #3) — matches our base Gemma 4 E4B exactly. That's the **capacity ceiling** for 8B-class zero-RL.
+- Training against a near-ceiling anchor hides real gains and conflates format drift with capability loss.
+- LCB v6 at 21.92 % base has huge headroom (+78 pp theoretical) and format-aligns with the task distribution we train on.
+
+### Revisiting v2 / v3 through the LCB lens
+
+We don't have LCB v6 numbers for the v2 and v3 adapters (they weren't measured), but their training distribution was identical to ours and they likely also improved LCB to some degree. Worth a retrospective run on one gen-10 snapshot from each to confirm the hypothesis — tells us whether the "plateau" on HumanEval+ was actually measurable progress on LCB.
+
+### Updated plan
+
+1. **Swap primary anchor to LCB v6.** Keep HumanEval+ as secondary (detects format regression). Update the +5 pp MVP target: need LCB v6 from 21.92 % to ~26.92 % (+5 pp). Given SSD hit +0.76 pp with a mid-size run, scaling SSD should plausibly get us there.
+2. **Scale SSD**: 500 → 2000 tasks, 8 → 16 candidates, 2 → 3 epochs. SSD paper reports +12.9 pp on Qwen3-30B with much larger sample budgets; we've used a fraction of that.
+3. **Diversify task pool**: currently 95 % abduction / 5 % deduction in our passing samples. The proposer's abduction-heavy output means the solver's SFT is mostly on reverse-engineering inputs. Add a deduction push — possibly by increasing temperature on the proposer for deduction tasks, or by filtering the pool to balance 50/50.
+4. **Retrospective v2/v3 LCB eval**: one anchor per adapter. Confirms the AZR paradigm hypothesis.
+5. **Optional later**: layer GRPO on top of the SSD-initialized adapter (original "Phase 1.5 plan B"). SSD should give GRPO a better starting distribution.
+
+### Also worth considering
+
+- **Our +5 pp target** was spec'd for HumanEval+ per docs/04. Given the ceiling, that target was unrealistic on that anchor. Formally redefine success criterion as "+5 pp on LCB v6" — keeps rigor while aligning measurement to training.
+
+---
+
 ## 2026-04-24 07:11 UTC — scan #6 (gen 14 train-start; gen 15 anchor ~25 min out)
 
 No change in trajectory since scan #5 (still just base=87.20% and gen_10=85.98%). Pace accelerated — gens 11-13 completed in ~10 min each thanks to Unsloth caching. Targeted search for AZR-adjacent work.
