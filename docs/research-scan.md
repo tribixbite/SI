@@ -202,6 +202,84 @@ Adoption priority for **Phase 1.5** (after the v2 run concludes):
 
 ---
 
+## 2026-04-24 08:35 UTC — scan #7 (deeper sweep after v2 stopped)
+
+User requested a thorough review before committing to SSD. Searched four more angles: expert iteration, small-model coding recipes, April 2026 dense-supervision, zero-variance GRPO specifically. Found **two papers that target our exact failure mode more directly than any previous candidate.**
+
+### RL-ZVP — No Prompt Left Behind (arXiv:2509.21880, Sep 2025) 🎯 EXACT-MATCH
+
+- **What (verbatim from abstract):** "current methods such as GRPO rely only on problems where the model responses to the same input differ in correctness, while ignoring those where all responses receive the same reward — so-called zero-variance prompts. In this work, we argue that such prompts are not useless but can, in fact, provide meaningful feedback for policy optimization. … RL-ZVP directly rewards correctness and penalizes errors even without contrasting responses, modulating feedback with token-level characteristics."
+- **Why it matters to SI:** This is **literally our problem** named in the title and targeted by the method. Our `frac_reward_zero_std=1` in nearly every step = zero-variance prompts being silently discarded. RL-ZVP extracts the signal instead.
+- **Results:** **+8.61 pp accuracy and +7.77 pp pass rate over GRPO** across six math reasoning benchmarks. Beats baselines that filter zero-variance prompts (which is effectively what we're doing by getting no gradient from them).
+- **Integration effort:** Low. It's an alternative advantage computation inside the GRPO loss — patches `trainer_unsloth.py`. No new forward passes, no new prompt formats.
+- **Decision:** **New #1 Phase 1.5 candidate.** More targeted than EBPO (which uses a global shrinkage prior; RL-ZVP uses token-level characteristics of the zero-variance group directly).
+- **Reference:** https://hf.co/papers/2509.21880
+
+### NSR — Surprising Effectiveness of Negative Reinforcement (arXiv:2506.01347, Jun 2025)
+
+- **What:** Decomposes GRPO learning signal into Positive (reward correct) and Negative (penalize incorrect). Key finding: **training with only negative samples — no reinforcement of correct responses — often matches or exceeds GRPO.** Reinforcing only correct improves pass@1 but **degrades pass@k due to reduced diversity.**
+- **Why it matters:** Our current reward = `{1.0 if verified else 0.0}` + `+0.1` format bonus. The 1.0 branch positively reinforces correct answers, which per this paper **reduces diversity and hurts pass@k**. The 3-improved / 5-regressed pattern we saw (narrowing of what the model "can do") is exactly this diversity collapse.
+- **Integration effort:** Tiny. Change reward to `{0.0, -1.0}` instead of `{1.0, 0.0}` and reinterpret.
+- **Decision:** **Adopt as a reward-shape ablation in Phase 1.5.** Simple A/B.
+- **Reference:** https://hf.co/papers/2506.01347
+
+### PACS — Implicit Actor-Critic via Supervised Learning (arXiv:2509.02522, Sep 2025)
+
+- **What:** Reformulates RLVR as supervised learning over a score function parameterized by the policy, optimized with cross-entropy. Implicit actor-critic. Stable where GRPO collapses.
+- **Results:** +13 pp over PPO, +14 pp over GRPO on AIME 2025 pass@256.
+- **Decision:** **#3 candidate, deferred.** More invasive than RL-ZVP; same-order integration to SD-Zero.
+
+### F-GRPO — Difficulty-Aware Advantage Scaling (arXiv:2602.06717, 6 Feb 2026)
+
+- **What:** Small-groups-miss-rare-correct problem explicitly identified: "Smaller groups often miss rare-correct trajectories while still containing mixed rewards, concentrating probability on common solutions." Focal-loss-style downweighting of high-success prompts. +6.2 pp pass@256 on Qwen2.5-7B with GRPO.
+- **Why it matters:** Validates that our `num_generations=2` is a real problem. F-GRPO's fix is orthogonal to RL-ZVP (theirs scales advantage by difficulty; RL-ZVP extracts signal from degenerate groups). Bundle-friendly.
+- **Decision:** **Adopt alongside RL-ZVP.** Complementary.
+
+### OpenCodeReasoning insight (arXiv:2504.01943, Apr 2025)
+
+- **Key finding:** "execution filtering negatively affected benchmark accuracy, leading us to prioritize instruction diversity over solution correctness." Qwen3-style distilled SFT model reaches 61.8 % on LiveCodeBench — **without RL**, purely SFT.
+- **Why it matters to SSD plan:** If we go the SSD route, the paper explicitly says **don't filter by verifier pass** — diversity matters more than correctness for generalization. This flips my original SSD design.
+- **Decision:** **Adjust SSD spec if we use it.** Keep even failing samples (or at least sample diversely before filtering).
+
+### NExt — Nonlinear LoRA Trajectory Extrapolation (arXiv:2604.11446, 13 Apr 2026)
+
+- **What:** Predicts LoRA parameter trajectory from rank-1 subspace; skips intermediate steps. 37.5 % compute reduction.
+- **Decision:** **Park for Phase 2.** Compute-saving, not capability-increasing.
+
+### Multiple Ticket Hypothesis (arXiv:2602.01599, Feb 2026)
+
+- **What:** Training only a randomly selected 1 % of parameters matches full-RLVR finetuning. Arbitrary sparse masks succeed.
+- **Why it matters:** Our LoRA rank 32 on text tower = 73 M trainable params = ~0.91 % of model. We're already at that sparsity. Suggests rank 16 or 8 would perform similarly; worth an A/B if we're constrained.
+- **Decision:** **Possible Phase 1.5 ablation** — try rank 8 for speed.
+
+### Revised Phase 1.5 ranking (final)
+
+Given the new findings, **two candidates are better than SSD for our exact failure mode**:
+
+| # | Method | Targets | Integration cost | Expected gain |
+|---|---|---|---|---|
+| 1 | **RL-ZVP** (arXiv:2509.21880) | Zero-variance groups directly | Low — GRPO advantage patch | +8.6 pp reported |
+| 2 | **F-GRPO** focal scaling | Small-group rare-correct misses | Low — bundle with RL-ZVP | +6.2 pp pass@256 |
+| 3 | **Prompt augmentation** (2602.03190) | Fixed-prompt entropy collapse | Very low | Small but cheap |
+| 4 | **NSR** reward shape ablation (2506.01347) | Diversity collapse from positive reinforcement | Tiny — flip reward sign | A/B test |
+| 5 | **SSD** self-distillation bootstrap (2604.01193) | Plateau breakthrough via SFT | Medium — new trainer | +12.9 pp on LiveCodeBench |
+| 6 | **EBPO** Welford shrinkage (2602.05165) | Global prior for degenerate groups | Medium | Overlapping with RL-ZVP |
+| 7 | **SD-Zero** reviser (2604.12002) | Binary → dense supervision | High | +10 pp baseline-relative |
+
+### Recommendation
+
+**Start with RL-ZVP instead of SSD.** Three reasons:
+
+1. **More targeted.** RL-ZVP's paper explicitly targets the exact failure mode we measured (zero-variance prompts causing no gradient). SSD is more general.
+2. **Lower integration cost.** RL-ZVP is a loss-function patch inside our existing Unsloth + TRL 1.2 pipeline. SSD needs a new trainer module.
+3. **Keeps AZR paradigm intact.** Doesn't force us away from self-play. If RL-ZVP fails, SSD is still available as a fallback. If we do SSD first we lose the ability to attribute the gain to any specific RL fix.
+
+Bundle RL-ZVP with F-GRPO focal scaling + prompt augmentation (same trainer patch) for Phase 1.5.
+
+If that doesn't hit +5 pp on HumanEval+ (and especially if HumanEval+ ceiling at ~87 % for 8B is the real bottleneck), then either layer SSD on top or switch to a harder anchor (MBPP+ / LiveCodeBench).
+
+---
+
 ## 2026-04-24 07:11 UTC — scan #6 (gen 14 train-start; gen 15 anchor ~25 min out)
 
 No change in trajectory since scan #5 (still just base=87.20% and gen_10=85.98%). Pace accelerated — gens 11-13 completed in ~10 min each thanks to Unsloth caching. Targeted search for AZR-adjacent work.
