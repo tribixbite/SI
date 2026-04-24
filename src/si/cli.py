@@ -210,8 +210,15 @@ def anchor(
     # merged dir. Subsequent anchors on the same adapter reuse the merged dir.
     load_path = model
     if adapter:
+        # Auto-detect nested PEFT dir (trainer saves at <adapter_out>/adapter/).
+        adapter_dir = Path(adapter)
+        if not (adapter_dir / "adapter_config.json").exists():
+            if (adapter_dir / "adapter" / "adapter_config.json").exists():
+                adapter_dir = adapter_dir / "adapter"
+                adapter = str(adapter_dir)
+                print(f"  resolved nested adapter path → {adapter}")
         from hashlib import sha256
-        h = sha256(Path(adapter).resolve().as_posix().encode()).hexdigest()[:16]
+        h = sha256(adapter_dir.resolve().as_posix().encode()).hexdigest()[:16]
         merged_path = f"/home/matilda/git/SI/cache/_merged/{h}"
         if not Path(merged_path, "config.json").exists():
             import subprocess, sys
