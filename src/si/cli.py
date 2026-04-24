@@ -263,6 +263,132 @@ def anchor(
         container.stop()
 
 
+@app.command(name="ssd-sample")
+def ssd_sample(
+    outcomes: list[str] = typer.Option(..., help="one or more outcomes*.jsonl files — pool of tasks"),
+    samples_out: str = typer.Option(..., help="output samples.jsonl path (passing candidates only)"),
+    n_samples: int = typer.Option(16, help="candidates generated per task"),
+    temperature: float = typer.Option(1.0, help="sampling temp (Unsloth Gemma 4 default)"),
+    top_p: float = typer.Option(0.95),
+    top_k: int = typer.Option(64),
+    max_tokens: int = typer.Option(512),
+    max_tasks: int | None = typer.Option(None, help="subsample tasks; None = all"),
+    model: str = typer.Option(DEFAULT_MODEL, help="Gemma 4 HF path for vLLM sampling"),
+) -> None:
+    """Stage 1 of SSD: sample N candidates per task, keep verifier-passing ones."""
+    _setup_logging()
+    from si.contracts import TaskType
+    from si.llm import GemmaLLM, GenParams
+    from si.prompts import (
+        SOLVER_SYSTEM_TEMPLATES,
+        solver_abduction_prompt,
+        solver_deduction_prompt,
+    )
+    from si.ssd import SSDSample, load_task_pool, verify_and_pack, write_samples
+    from si.verifier import SandboxContainer, SandboxVerifier
+
+    tasks = load_task_pool(outcomes)
+    if max_tasks is not None and len(tasks) > max_tasks:
+        tasks = tasks[:max_tasks]
+    print(f"[bold cyan]SI ssd-sample[/bold cyan] {len(tasks)} unique tasks × {n_samples} candidates")
+
+    # Load vLLM once; sample everything; close; filter (sandbox is CPU-bound).
+    llm = GemmaLLM(model, cuda_visible_devices="1")
+    params = GenParams(temperature=temperature, top_p=top_p, max_tokens=max_tokens, n=n_samples)
+    user_prompts = []
+    system_prompts = []
+    for t in tasks:
+        if t.task_type is TaskType.DEDUCTION:
+            user_prompts.append(solver_deduction_prompt(t.program, t.input))
+        elif t.task_type is TaskType.ABDUCTION:
+            user_prompts.append(solver_abduction_prompt(t.program, t.output))
+        else:
+            user_prompts.append("")  # induction not supported; will filter
+        # Rotate across the 6-prompt pool deterministically so SSD's SFT sees
+        # the same prompt-augmentation distribution the solver would at train time.
+        system_prompts.append(SOLVER_SYSTEM_TEMPLATES[len(system_prompts) % len(SOLVER_SYSTEM_TEMPLATES)])
+
+    # vLLM doesn't accept per-prompt system messages via chat_batch, so we
+    # render each task separately. Still batched by vLLM's internal scheduling.
+    print(f"  sampling {len(tasks) * n_samples} completions...")
+    all_candidates: list[list[str]] = []
+    batch = 64
+    for i in range(0, len(tasks), batch):
+        chunk_users = user_prompts[i : i + batch]
+        chunk_syss = system_prompts[i : i + batch]
+        # Group by system prompt so we issue one chat_batch call per distinct system.
+        by_sys: dict[str, list[int]] = {}
+        for j, s in enumerate(chunk_syss):
+            by_sys.setdefault(s, []).append(j)
+        chunk_out: list[list[str] | None] = [None] * len(chunk_users)
+        for sys_text, idxs in by_sys.items():
+            subset = [chunk_users[j] for j in idxs]
+            outs = llm.chat_batch(subset, params, system=sys_text)
+            for local_j, global_j in enumerate(idxs):
+                chunk_out[global_j] = outs[local_j]
+        all_candidates.extend(chunk_out)  # type: ignore[arg-type]
+        print(f"  ...{min(i + batch, len(tasks))}/{len(tasks)} tasks sampled")
+
+    # Free vLLM before booting sandbox (it doesn't really matter VRAM-wise,
+    # but clean lifecycle avoids orphaned EngineCore workers).
+    del llm
+
+    # Verify + pack.
+    container = SandboxContainer()
+    verifier = SandboxVerifier(container=container)
+    all_passing: list[SSDSample] = []
+    try:
+        for i, task in enumerate(tasks):
+            cands = all_candidates[i] or []
+            packed = verify_and_pack(
+                task=task,
+                candidates=cands,
+                verifier=verifier,
+                system_prompt=system_prompts[i],
+                user_prompt=user_prompts[i],
+            )
+            all_passing.extend(packed)
+            if (i + 1) % 32 == 0:
+                print(f"  verified {i+1}/{len(tasks)} tasks; kept {len(all_passing)} samples")
+    finally:
+        verifier.close()
+
+    write_samples(all_passing, samples_out)
+    pass_rate = len(all_passing) / max(1, len(tasks) * n_samples)
+    print(
+        f"[green]wrote[/green] {samples_out} "
+        f"({len(all_passing)} passing / {len(tasks)*n_samples} generated = {pass_rate:.2%})"
+    )
+
+
+@app.command(name="ssd-train")
+def ssd_train(
+    samples: str = typer.Option(..., help="samples.jsonl from ssd-sample"),
+    adapter_out: str = typer.Option(..., help="output adapter directory"),
+    model: str = typer.Option(DEFAULT_TRAIN_MODEL, help="Gemma 4 HF 4-bit path for SFT"),
+    epochs: int = typer.Option(2),
+    lr: float = typer.Option(2e-5),
+    lora_rank: int = typer.Option(32),
+) -> None:
+    """Stage 2 of SSD: SFT on verifier-passing samples via Unsloth FastModel."""
+    _setup_logging()
+    from si.ssd import read_samples
+    from si.trainer_ssd import SSDTrainer, SSDTrainerConfig
+
+    all_samples = read_samples(samples)
+    print(f"[bold cyan]SI ssd-train[/bold cyan] {len(all_samples)} samples")
+    cfg = SSDTrainerConfig(
+        model_path=model,
+        output_dir=adapter_out,
+        lora_rank=lora_rank,
+        lr=lr,
+        epochs=epochs,
+    )
+    trainer = SSDTrainer(cfg)
+    saved = trainer.train_on_samples(all_samples)
+    print(f"[green]adapter saved to[/green] {saved}")
+
+
 @app.command()
 def smoke() -> None:
     """Phase 0 smoke — load base Gemma 4, generate, verify. Equivalent to scripts/smoke_e2e.py."""
