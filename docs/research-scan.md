@@ -76,3 +76,49 @@ Trigger: `phase1_v2_20260423_2250` started 02:50Z, currently mid-train on gen 1.
 Two clear adoption candidates for **Phase 1.5**: ERPO (direct fix for zero-variance groups) + GRESO (throughput). Both share a per-prompt history tracker so they bundle naturally. Estimate ~1 day of work for both. Do NOT hot-patch into the live Phase 1-v2 process — reproducibility first.
 
 ---
+
+## 2026-04-24 04:00 UTC — scan #3 (hourly monitor, gen 5/50 train-start)
+
+Healthy run: 5 gens in ~68 min, per-gen 19 min (3 min rollout + 16 min train). First trained anchor (gen_0005) lands in ~15 min.
+
+### SD-Zero — Self-Distillation Zero (arXiv:2604.12002, 13 Apr 2026) 🎯 TOP HIT
+
+- **What:** Trains one model to play two roles — Generator (produces initial response) and Reviser (conditions on generator's response + its binary reward, produces improved response). Then on-policy self-distillation distills the reviser into the generator. Turns sparse binary rewards into dense token-level self-supervision. **>10 % gain over base**, outperforms RFT / GRPO / SDFT on math + code at same sample budget (Qwen3-4B-Instruct, Olmo-3-7B-Instruct).
+- **Why it matters to SI — directly:** This is the principled fix for the problem we've been fighting. AZR's binary verifier reward is exactly the sparse-reward setting SD-Zero was designed for. Instead of playing tricks with temperature (ERPO) or pre-filtering prompts (GRESO), SD-Zero converts the binary into dense token-level supervision — no gradient starvation. The reviser can localize which tokens to revise given the reward, then teach that back to the generator.
+- **Integration effort:** Medium-high. Needs a new role prompt ("given this response and reward, produce an improved response"), a second forward pass per trained step, and on-policy distillation loss replacing part of the GRPO loss. Probably a `src/si/reviser.py` + `src/si/trainer_sdzero.py`. Still uses Unsloth + TRL 1.2 infra.
+- **Decision:** **Adopt as Phase 1.5 alternative trainer.** Compare SD-Zero directly against GRPO+ERPO on the same anchor. The paper's results suggest SD-Zero could give us our +5 pp target alone. Highest-priority research integration now.
+- **Reference:** https://hf.co/papers/2604.12002
+
+### PSV — Propose, Solve, Verify (arXiv:2512.18160, 20 Dec 2025)
+
+- **What:** Same framework shape as AZR (proposer + solver), but uses **formal verification** (Verus) instead of Python executor. 9.6 × pass@1 improvement over inference-only / expert-iteration baselines. Ablations identify formal verification and **difficulty-aware proposal** as essential ingredients.
+- **Why it matters:** Validates our MC-difficulty proposer reward design — the paper explicitly names difficulty-aware proposal as necessary for self-play to succeed.
+- **Integration effort:** Formal verification substitute is out of scope for Python self-play (we already have a cheap executor). Nothing new to adopt directly.
+- **Decision:** **Reference / cite.** Their "difficulty-aware proposal" result is a good ammunition for why AZR's MC reward matters.
+
+### ReflexiCoder (arXiv:2603.05863, Mar 2026)
+
+- **What:** RL-zero framework that internalizes generate → reflect → correct into weights. ReflexiCoder-8B gets **87.20 % on HumanEval+**, **94.51 % on HumanEval**, 81.80 % MBPP+, rivaling GPT-5.1.
+- **Why it matters:** Their 87.20 % HumanEval+ matches our base Gemma 4 E4B exactly — suggests that number is near-ceiling for strong small-model zero-RL on HumanEval+. Our +5 pp target may be harder than it seemed. Secondary benchmarks (MBPP+, BigCodeBench, LiveCodeBench) would show larger deltas.
+- **Integration effort:** Direct port is research-scale; their granular reward functions are code-specific.
+- **Decision:** **Defer.** Lesson: add MBPP+ or LiveCodeBench as a secondary anchor so we're not bottlenecked on HumanEval+ ceiling.
+
+### Socratic-Zero (arXiv:2509.24726, Sep 2025)
+
+- **What:** Teacher / Solver / Generator co-evolution from 100 seed questions. +20.2 pp over data-synthesis methods on seven math benchmarks.
+- **Why it matters:** Adds a third role (Generator = distills Teacher's question-design). Our AZR variant has only Proposer + Solver; Socratic-Zero's Generator could be our Phase 2+ Elo selection mechanism.
+- **Decision:** **Consider for Phase 2.** Skip for now.
+
+### SimpleRL-Zoo (arXiv:2503.18892, Mar 2025)
+
+- **What:** Zero-RL across 10 diverse base models. Key design lessons: format-reward + query-difficulty control.
+- **Why it matters:** Validates our shaping-reward approach (`make_format_reward_fn`). Also notes "aha moment" varies across base models — Gemma 4 may or may not exhibit it.
+- **Decision:** **Reference.** Read before Phase 2 scaling.
+
+### Summary of scan #3
+
+Strongest hit: **SD-Zero (Apr 13, 2026)** — published 10 days ago. Self-distilled reviser turns binary reward into dense supervision; addresses our core problem at the mechanism level instead of via temperature tricks. Promote to top adoption candidate above ERPO/GRESO. Caveat: untested on 4-bit QLoRA + Unsloth stack; integration is real work. Adds `src/si/trainer_sdzero.py` and a reviser prompt path.
+
+Also note: ReflexiCoder-8B hit 87.20% HumanEval+ (our base!). Our +5 pp target on that single anchor may be the wrong KPI. Recommend adding MBPP+ or LiveCodeBench v6 as secondary anchor before Phase 1-v3.
+
+---
