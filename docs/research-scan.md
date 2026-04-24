@@ -280,6 +280,16 @@ If that doesn't hit +5 pp on HumanEval+ (and especially if HumanEval+ ceiling at
 
 ---
 
+## 2026-04-24 11:00 UTC — scan #8 (v3 gen 5 train; nothing new)
+
+Run `phase1_v3_20260424_0954` gen 5 train in progress. Training metrics stable: kl 1-18, grad 1-40 (clipped at 1.0), loss 0.05-0.22. `frac_reward_zero_std=1` as expected — RL-ZVP is catching them.
+
+Quick targeted query ("April 2026 LoRA GRPO LLM stability") surfaced only papers already catalogued in earlier scans: CPGD (arXiv:2505.12504, KL-drift constraint — we already have beta=0.01 KL), SSPO (arXiv:2511.04256, sentence-level importance ratios — orthogonal, defer), Scaf-GRPO (already in scan #2), ERPO (scan #2). Nothing new to adopt.
+
+**Decision:** skip appending; keep running. Cadence: don't log scans that find nothing new — only append when there's an actionable finding. Saves doc bloat.
+
+---
+
 ## 2026-04-24 07:11 UTC — scan #6 (gen 14 train-start; gen 15 anchor ~25 min out)
 
 No change in trajectory since scan #5 (still just base=87.20% and gen_10=85.98%). Pace accelerated — gens 11-13 completed in ~10 min each thanks to Unsloth caching. Targeted search for AZR-adjacent work.
