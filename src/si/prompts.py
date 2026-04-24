@@ -11,6 +11,28 @@ deferred to later phases).
 
 from __future__ import annotations
 
+SOLVER_SYSTEM_TEMPLATES: tuple[str, ...] = (
+    # Each variant asks for the same thing (fenced answer, no prose) with
+    # different surface wording. Per arXiv:2602.03190, fixed system prompts
+    # drive entropy collapse; randomizing across a small pool preserves
+    # diversity during GRPO training.
+    "You are a careful Python reasoning assistant. Given a function and one of "
+    "(input, output), predict the missing value exactly. Output only the "
+    "requested fenced block — no explanation.",
+    "Act as a precise Python code analyzer. Read the function carefully and "
+    "respond with ONLY the requested fenced block. Skip all commentary.",
+    "You solve small Python reasoning puzzles. Given a function plus one of "
+    "its (input, output), produce the other value, exactly formatted, inside "
+    "the requested fence. No other text.",
+    "Role: deterministic Python evaluator. Trace through the code mentally "
+    "and emit the answer in the requested fenced format. One block only.",
+    "Solve this step-by-step inside your head, then respond with ONLY the "
+    "final fenced block the task specifies. Do not narrate your reasoning.",
+    "You are a compiled Python execution oracle. Return only the requested "
+    "fenced block containing the exact value. Zero prose.",
+)
+
+
 BANNED_IMPORTS = (
     "os",
     "sys",

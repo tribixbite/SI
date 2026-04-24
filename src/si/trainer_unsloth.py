@@ -26,24 +26,27 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
+import random
+
 from datasets import Dataset
-from trl import GRPOConfig, GRPOTrainer
+from trl import GRPOConfig
 
 from si.contracts import Solution, Task, TaskType
 from si.match import ProposalOutcome
 from si.parsers import extract_input, extract_output
-from si.prompts import solver_abduction_prompt, solver_deduction_prompt
+from si.prompts import (
+    SOLVER_SYSTEM_TEMPLATES,
+    solver_abduction_prompt,
+    solver_deduction_prompt,
+)
+from si.trainer_rlzvp import RLZVPGRPOTrainer
 from si.verifier import SandboxVerifier
 
 log = logging.getLogger(__name__)
 
 DEFAULT_UNSLOTH_MODEL = "/home/matilda/git/SI/cache/gemma-4-E4B-unsloth-4bit"
 
-_SYSTEM_SOLVER = (
-    "You are a careful Python reasoning assistant. Given a function and one of "
-    "(input, output), predict the missing value exactly. Output only the "
-    "requested fenced block — no explanation."
-)
+_SYSTEM_SOLVER = SOLVER_SYSTEM_TEMPLATES[0]  # default; dataset may randomize per row
 
 
 @dataclass
@@ -62,9 +65,19 @@ class UnslothTrainerConfig:
     num_generations: int = 2  # small group; higher values OOM on 3090 with Gemma 4 E4B
     max_steps: int = -1  # -1 means use num_train_epochs
     epochs: int = 1
-    beta: float = 0.001  # KL coefficient (TRL 1.2 uses beta, not epsilon/delta)
+    beta: float = 0.01  # KL coefficient; 10x v2 default because RL-ZVP injects signal on every step
     grad_clip_norm: float = 1.0
     random_state: int = 3407
+    # RL-ZVP / F-GRPO knobs (docs/research-scan.md scan #7).
+    # rlzvp_magnitude=0.05 chosen after a 64-step smoke on stale outcomes blew up
+    # (kl→11790, grad→3216) at magnitude=0.5. With frac_reward_zero_std≈1 every
+    # sample gets injected advantage, so a magnitude one order of magnitude below
+    # normal GRPO advantage (|adv|~1) is the safe starting point.
+    rlzvp_enabled: bool = True
+    rlzvp_magnitude: float = 0.05
+    rlzvp_pos_threshold: float = 0.5  # reward above this is "positive" for sign
+    fgrpo_gamma: float | None = 2.0  # None disables F-GRPO focal scaling
+    randomize_system_prompt: bool = True
 
 
 def _user_prompt_for(task: Task) -> str:
@@ -77,18 +90,26 @@ def _user_prompt_for(task: Task) -> str:
     raise NotImplementedError(f"no prompt builder for {task.task_type}")
 
 
-def outcomes_to_unsloth_dataset(outcomes: list[ProposalOutcome]) -> Dataset:
+def outcomes_to_unsloth_dataset(
+    outcomes: list[ProposalOutcome], *, randomize_system: bool = True, seed: int = 3407
+) -> Dataset:
     """Build a HF dataset with multimodal-style typed content blocks.
 
     Gemma 4's processor rejects plain string content — must be a list of
     {"type": "text", "text": "..."} blocks even for text-only tasks.
+
+    `randomize_system=True` cycles across SOLVER_SYSTEM_TEMPLATES (prompt
+    augmentation per arXiv:2602.03190) to prevent entropy collapse from a
+    fixed system prompt.
     """
+    rng = random.Random(seed)
     rows = []
     for o in outcomes:
         task = o.task
         prompt_user = _user_prompt_for(task)
+        sys_prompt = rng.choice(SOLVER_SYSTEM_TEMPLATES) if randomize_system else _SYSTEM_SOLVER
         messages = [
-            {"role": "system", "content": [{"type": "text", "text": _SYSTEM_SOLVER}]},
+            {"role": "system", "content": [{"type": "text", "text": sys_prompt}]},
             {"role": "user", "content": [{"type": "text", "text": prompt_user}]},
         ]
         rows.append(
@@ -259,9 +280,19 @@ class UnslothSITrainer:
         if not outcomes:
             log.warning("train_on_generation called with no outcomes; skipping")
             return ""
-        dataset = outcomes_to_unsloth_dataset(outcomes)
-        log.info("building Unsloth GRPO trainer for %d tasks", len(dataset))
-        trainer = GRPOTrainer(
+        dataset = outcomes_to_unsloth_dataset(
+            outcomes,
+            randomize_system=self.cfg.randomize_system_prompt,
+            seed=self.cfg.random_state,
+        )
+        log.info(
+            "building RLZVP GRPO trainer for %d tasks (rlzvp=%s fgrpo_gamma=%s aug_prompt=%s)",
+            len(dataset),
+            self.cfg.rlzvp_enabled,
+            self.cfg.fgrpo_gamma,
+            self.cfg.randomize_system_prompt,
+        )
+        trainer = RLZVPGRPOTrainer(
             model=self.model,
             processing_class=self.tokenizer,
             reward_funcs=[
@@ -270,6 +301,10 @@ class UnslothSITrainer:
             ],
             args=self._grpo_args(),
             train_dataset=dataset,
+            rlzvp_enabled=self.cfg.rlzvp_enabled,
+            rlzvp_magnitude=self.cfg.rlzvp_magnitude,
+            rlzvp_pos_threshold=self.cfg.rlzvp_pos_threshold,
+            fgrpo_gamma=self.cfg.fgrpo_gamma,
         )
         trainer.train()
         adapter_path = str(Path(self.cfg.output_dir) / "adapter")
