@@ -201,3 +201,41 @@ Adoption priority for **Phase 1.5** (after the v2 run concludes):
 **Plan:** Let v2 finish OR stop at gen 15 if still regressing. Then Phase 1.5 = EBPO + LLDS + prompt aug (bundled into one release) → measure → if still insufficient, add SD-Zero.
 
 ---
+
+## 2026-04-24 07:11 UTC — scan #6 (gen 14 train-start; gen 15 anchor ~25 min out)
+
+No change in trajectory since scan #5 (still just base=87.20% and gen_10=85.98%). Pace accelerated — gens 11-13 completed in ~10 min each thanks to Unsloth caching. Targeted search for AZR-adjacent work.
+
+### SSD — Embarrassingly Simple Self-Distillation (arXiv:2604.01193, 1 Apr 2026) 🎯
+
+- **What:** Sample N candidate solutions from the model with tuned temperature + truncation, then run plain supervised fine-tuning on those samples. No verifier, no teacher, no RL. Qwen3-30B-Instruct: **42.4 % → 55.3 %** on LiveCodeBench v6 (+12.9 pp). Gains concentrate on harder problems. Works on Qwen + Llama at 4B/8B/30B.
+- **Why it matters to SI:** A complementary bootstrap step we could run **before** (or interleaved with) AZR. If the raw model can improve itself by simple self-distillation, we don't need GRPO to do all the work — that breaks the "GRPO-or-nothing" assumption I've been operating under. SSD by itself could give us the +5 pp target on HumanEval+ (the paper shows even larger gains on LiveCodeBench).
+- **Integration effort:** Tiny. A `si ssd-bootstrap` subcommand that uses `GemmaLLM` to generate N candidates per HumanEval+-style prompt, filters by the verifier if available, then SFT via the existing Unsloth path.
+- **Decision:** **Adopt as Phase 1.5 opener.** Run SSD first; it's a strictly additive bootstrap that doesn't fight GRPO. If SSD alone hits the +5 pp target, Phase 1 succeeds and we skip EBPO. If not, layer EBPO/LLDS on top.
+- **Reference:** https://hf.co/papers/2604.01193
+
+### R-Zero (arXiv:2508.05004, Aug 2025)
+
+- **What:** Challenger/Solver co-evolution from zero data. Two independent models (not role-switched). Qwen3-4B-Base: +6.49 pp math, +7.54 pp general reasoning.
+- **Why it matters:** Architectural variant of AZR — separate models diverge more. Could inform Phase 2 multi-branch design where each island holds a specialized challenger-solver pair.
+- **Decision:** **Defer to Phase 2.** Our current single-model role switching (per AZR's §3.2) is simpler to debug first.
+
+### Code-A1 (arXiv:2603.15611, Mar 2026) + Sol-Ver (arXiv:2502.14948, Feb 2025)
+
+- **What:** Adversarial code-vs-test generation. Code LLM rewarded for passing tests; Test LLM rewarded for exposing bugs. Matches/exceeds human-test-trained models on Qwen2.5-Coder.
+- **Why it matters:** Induction tasks in AZR need test generation. Code-A1's adversarial separation is a clean template for that.
+- **Decision:** **Park for Phase 2** (when we add induction). Won't help the current regression.
+
+### Summary of scan #6 — update to the plan
+
+New ordering for **Phase 1.5**:
+
+1. **SSD self-distillation bootstrap** — simplest, gain is additive, no GRPO coupling. Go first.
+2. **EBPO** Welford shrinkage — fix GRPO's vanishing-gradient problem in the residual (post-SSD) training.
+3. **LLDS** likelihood regularizer — bundle with EBPO.
+4. **Prompt augmentation** — cheap add-on.
+5. **SD-Zero** (Apr 13) — bigger lift, fallback if the above don't hit target.
+
+Rationale: SSD is decoupled from everything else and has demonstrated double-digit gains on LiveCodeBench. If SSD alone gives us +5 pp on HumanEval+, Phase 1 is done. If it doesn't, we still have the trained adapter as a better starting point for GRPO (EBPO etc.).
+
+---
