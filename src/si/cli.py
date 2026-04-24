@@ -194,11 +194,12 @@ def train(
 @app.command()
 def anchor(
     adapter: str | None = typer.Option(None, help="LoRA adapter (optional, base if omitted)"),
-    max_problems: int | None = typer.Option(None, help="subset size (None = all 164)"),
+    max_problems: int | None = typer.Option(None, help="subset size (None = all)"),
     model: str = typer.Option(DEFAULT_MODEL),
     out: str | None = typer.Option(None, help="optional JSON output path"),
+    benchmark: str = typer.Option("humaneval", help="humaneval | lcb | lcb-functional | lcb-stdin"),
 ) -> None:
-    """Evaluate a branch (adapter or base) on HumanEval+."""
+    """Evaluate a branch (adapter or base) on HumanEval+ or LiveCodeBench v6."""
     _setup_logging()
     from si.humaneval import humaneval_plus_pass_at_1
     from si.llm import GemmaLLM
@@ -235,11 +236,32 @@ def anchor(
     container.start()
     try:
         llm = GemmaLLM(load_path, cuda_visible_devices="1")
-        result = humaneval_plus_pass_at_1(
-            llm, max_problems=max_problems, timeout_s=10.0, temperature=0.2
-        )
+        if benchmark == "humaneval":
+            result = humaneval_plus_pass_at_1(
+                llm, max_problems=max_problems, timeout_s=10.0, temperature=0.2
+            )
+            label = "HumanEval+"
+            extra = {}
+        elif benchmark in ("lcb", "lcb-functional", "lcb-stdin"):
+            from si.livecodebench import lcb_pass_at_1
+            tt = None
+            if benchmark == "lcb-functional":
+                tt = "functional"
+            elif benchmark == "lcb-stdin":
+                tt = "stdin"
+            result = lcb_pass_at_1(
+                llm,
+                version="release_v6",
+                max_problems=max_problems,
+                testtype_filter=tt,
+                temperature=0.2,
+            )
+            label = f"LCB v6 ({tt or 'all'})"
+            extra = {"per_difficulty": result.per_difficulty}
+        else:
+            raise typer.BadParameter(f"unknown benchmark {benchmark!r}")
         print(
-            f"[green]HumanEval+ pass@1:[/green] "
+            f"[green]{label} pass@1:[/green] "
             f"{result.passed}/{result.total} = {result.pass_at_1:.2%} "
             f"(wall {result.wall_s:.1f}s)"
         )
@@ -249,11 +271,13 @@ def anchor(
                 json.dump(
                     {
                         "adapter": adapter,
+                        "benchmark": benchmark,
                         "passed": result.passed,
                         "total": result.total,
                         "pass_at_1": result.pass_at_1,
                         "wall_s": result.wall_s,
                         "per_problem": result.per_problem,
+                        **extra,
                     },
                     f,
                     indent=2,
