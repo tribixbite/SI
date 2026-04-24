@@ -41,6 +41,7 @@ class SSDTrainerConfig:
     grad_clip_norm: float = 1.0
     random_state: int = 3407
     packing: bool = True  # packs multiple samples into max_seq_length for efficiency
+    lora_dropout: float = 0.05  # ssd_v2 overfit at 0.0; regularize LoRA deltas
 
 
 def samples_to_dataset(samples: list[SSDSample], tokenizer) -> Dataset:
@@ -87,6 +88,7 @@ class SSDTrainer:
             r=cfg.lora_rank,
             target_modules=r"^.*\blanguage_model\..*\.(q_proj|k_proj|v_proj|o_proj|gate_proj|up_proj|down_proj)$",
             lora_alpha=cfg.lora_rank * 2,
+            lora_dropout=cfg.lora_dropout,
             use_gradient_checkpointing="unsloth",
             random_state=cfg.random_state,
             finetune_vision_layers=False,
