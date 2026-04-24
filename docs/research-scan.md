@@ -239,3 +239,35 @@ New ordering for **Phase 1.5**:
 Rationale: SSD is decoupled from everything else and has demonstrated double-digit gains on LiveCodeBench. If SSD alone gives us +5 pp on HumanEval+, Phase 1 is done. If it doesn't, we still have the trained adapter as a better starting point for GRPO (EBPO etc.).
 
 ---
+
+## 2026-04-24 08:13 UTC — v2 run stopped (gen 18 train-done; decision trigger)
+
+gen_15 anchor = 141/164 = 85.98% — **identical per-problem to gen_10**. Five generations of GRPO produced zero net change:
+```
+gen_0000  143/164 = 87.20%  (base)
+gen_0010  141/164 = 85.98%  (-1.22pp)
+gen_0015  141/164 = 85.98%  (plateau confirmed, per-problem == gen_10)
+```
+
+Diff vs base:
+- Regressed (base pass → gen_10 fail): HumanEval/65, 84, 86, 93, 137
+- Improved (base fail → gen_10 pass): HumanEval/91, 126, 140
+- Net -2.
+
+The LoRA converged to a fixed point at temp=0.2 (deterministic) distinct from base but slightly worse on pass@1. Further GRPO steps do not move it — matches scan #5's "Lazy Likelihood Displacement: early stagnation" phase precisely.
+
+**Stopped `phase1_v2_20260423_2250` at gen 18** (killed PID 634686 + reaped vLLM workers 692994, 692995). Saved ~6 h of GPU-idle compute we would have spent on more of the same plateau.
+
+### Phase 1.5 plan (pending user approval)
+
+New direction — SSD self-distillation bootstrap instead of more GRPO first:
+
+1. **SSD bootstrap** (arXiv:2604.01193) — 1-2 days impl. Generate N candidates per held-out `si`-style prompt, SFT on the verifier-passing ones. Additive; doesn't fight GRPO; doesn't require AZR proposer. Target: +3–5 pp on HumanEval+ alone.
+2. **Anchor check** — if +5 pp met, Phase 1 done. If not, add:
+3. **EBPO** (arXiv:2602.05165) — Welford shrinkage in GRPO to fix `frac_reward_zero_std=1`. Run AZR-GRPO on top of the SSD-initialized adapter.
+4. **LLDS + prompt augmentation** — bundle with EBPO.
+5. **SD-Zero** if still short.
+
+Why this order over original EBPO-first plan: gen 10/15 plateau at 85.98% with identical per-problem pattern shows the problem isn't just gradient variance — the model is stuck in a local optimum where binary rewards produce no useful signal. SSD's dense SFT supervision should break the plateau from a different angle before we reintroduce the unstable GRPO loop.
+
+---
