@@ -290,6 +290,53 @@ Quick targeted query ("April 2026 LoRA GRPO LLM stability") surfaced only papers
 
 ---
 
+## 2026-04-24 13:00 UTC — v3 stopped at gen 13; RL-ZVP did not fix the plateau
+
+Anchor trajectory:
+```
+v2 (vanilla GRPO)          v3 (RL-ZVP + F-GRPO + prompt aug)
+base  143/164 = 87.20%     base  143/164 = 87.20%
+g10   141/164 = 85.98%     g05   140/164 = 85.37%
+g15   141/164 = 85.98%     g10   140/164 = 85.37%
+```
+
+Same shape (early drop → identical plateau per-problem) but **v3 stabilized 0.6 pp lower than v2**. RL-ZVP's added gradient in degenerate groups pushed the policy *faster* to a worse fixed point. Killed at gen 13 per the kill-threshold rule.
+
+### Revised diagnosis
+
+Both v2 and v3 exhibit the same pathology: LoRA drifts to a nearby fixed point slightly below base, and further training doesn't move it. I no longer think this is a GRPO variance problem. The root cause is upstream:
+
+**Our training distribution is task-too-hard-dominated.**
+
+- Frozen Gemma 4 E4B proposer generates tasks that are mostly too hard for the frozen Gemma 4 E4B solver (smoke showed 1/6 pass rate at start).
+- `frac_reward_zero_std ≈ 1` in ~95% of GRPO steps across both runs.
+- All-fail groups dominate. Binary reward gives no directional signal — the model can learn "not this" but has no "that" to aim at.
+- GRPO + variants (incl. RL-ZVP/F-GRPO/prompt-aug) are all within-batch advantage methods. They need within-batch variance to extract direction. The input distribution denies them that.
+
+In short: **no within-batch advantage method can fix a training distribution that has no within-batch success variance.** We were trying to fix the gradient estimator when the data was the problem.
+
+### Supporting evidence from the literature
+
+- Scaf-GRPO (arXiv:2510.19807) explicitly names this: *"the 'learning cliff' phenomenon: when faced with problems far beyond their current capabilities, models consistently fail, yielding a persistent zero-reward signal."*
+- EEF (arXiv:2504.13145) makes the same point for agent tasks: "RFT inherently favors simpler scenarios, many complex subtasks remain unsolved and persistently OOD."
+- Our own data: plateau at per-problem-identical pattern = LoRA found a stable attractor and is stuck.
+
+### Pivot options (pick one)
+
+| # | Approach | Effort | Why | Risk |
+|---|---|---|---|---|
+| A | **SSD self-distillation** (scan #6) | 1-2 days | Breaks the plateau by learning from the model's own occasional successes; no RL needed; doesn't require within-batch variance. Qwen3-30B +12.9 pp in paper. | Still ceiling-limited by base model (ReflexiCoder 8B = 87.2% = our base). |
+| B | **Proper AZR: co-train proposer** | 3-5 days | Addresses the root cause — proposer learns MC-difficulty 0.5 targeting, so tasks become solvable. What AZR paper actually does; we deferred in Phase 1. | Same instability problems we hit with solver-only GRPO; adds second loop. |
+| C | **Seed easy-task curriculum** | 2-3 days | Bootstrap with an easy-task pool (generated once by a stronger model, or sampled from HumanEval-training-set-sized set — but that's external data, violating "zero data" spec). | Tension with zero-external-data spec. |
+| D | **Scale up: Gemma 4 26B-A4B** | requires disk resize + config | Bigger base = more tasks in solvable range. 26B-A4B MoE fits on 3090 at Q4 (~16 GB). | Breaks the "single-3090 MVP" framing; VRAM very tight for training. |
+| E | **Swap anchor to MBPP+ or LiveCodeBench v6** | 1 day | If HumanEval+ is 8B-ceiling (ReflexiCoder evidence), our +5 pp target is near-impossible on this anchor. A harder anchor shows gains. | Doesn't fix the plateau; just moves the measurement. |
+
+**My recommendation: A (SSD).** Cheapest, most paradigm-different from what we've tried, avoids the "need variance" trap, and the paper's result is directly applicable to our situation (sparse binary reward → dense SFT signal via the model's own successful samples). If SSD alone hits +3 pp we'll know the paradigm matters more than the RL tuning.
+
+If A doesn't move things, B (proposer co-training) is the principled AZR fix — but it's bigger scope.
+
+---
+
 ## 2026-04-24 07:11 UTC — scan #6 (gen 14 train-start; gen 15 anchor ~25 min out)
 
 No change in trajectory since scan #5 (still just base=87.20% and gen_10=85.98%). Pace accelerated — gens 11-13 completed in ~10 min each thanks to Unsloth caching. Targeted search for AZR-adjacent work.
