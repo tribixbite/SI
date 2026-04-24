@@ -11,18 +11,54 @@ Base model: **Gemma 4 26B A4B** (MoE, 3.8B active) or **Gemma 4 31B Dense**, via
 
 Target hardware: 1× 3090 (MVP), 5× 3090 (working), 10× 3090 (exploration).
 
-## Status
+## Status (2026-04-24)
 
-Pre-alpha scaffolding and specification. No trained checkpoints yet. This repo exists to specify the system precisely enough that the MVP can be built deterministically in a week.
+**Phase 1 MVP implemented and training.** The AZR self-play loop runs end-to-end on Gemma 4 E4B with Unsloth QLoRA + TRL GRPO + sandbox-fusion verifier + HumanEval+ anchor. 38/38 unit + integration tests green.
+
+- **Base model anchor (HumanEval+):** 143/164 = **87.20%** on `google/gemma-4-E4B-it`.
+- **Phase 1 target:** ≥92.20% (+5 pp) on the same anchor.
+- **First full training run** (`phase1_full_20260420`, 144 gens, 12 h walltime) exposed three compounding bugs: `si anchor` didn't mount the adapter, vLLM 0.19.1 can't hot-mount LoRA on `Gemma4ForConditionalGeneration`, and `FastVisionModel` applied LoRA to vision + audio towers diluting the signal. All three are fixed; **Phase 1-v2** re-runs with text-tower-only LoRA, auto-merge anchor, 4× denser rollouts.
+- **Phases 2–4** (Elo tournament, island migration, In-Place TTT) are still scaffolded — the spec docs remain load-bearing for them.
 
 ## Reading order
 
-Start with [`docs/00-overview.md`](docs/00-overview.md). Then, depending on what you want:
+- **"What's built today and how does it run?"** → [`docs/07-architecture.md`](docs/07-architecture.md), then [`CLAUDE.md`](CLAUDE.md) for hardware notes.
+- **"How do I run or monitor a Phase 1 training cycle?"** → the [Running Phase 1](#running-phase-1) section below.
+- **"What's the original design spec?"** → [`docs/00-overview.md`](docs/00-overview.md) → 06-risks.md for intent / risks / evaluation rules.
+- **"What changed in the last N hours?"** → [`docs/research-scan.md`](docs/research-scan.md) (hourly scan log during training runs).
 
-- **"Is this worth building?"** → [`docs/06-risks.md`](docs/06-risks.md)
-- **"What exactly is being combined?"** → [`docs/03-stack.md`](docs/03-stack.md)
-- **"How do I run the MVP this weekend?"** → [`docs/04-implementation.md`](docs/04-implementation.md) §1
-- **"What are the exact source commits and versions?"** → [`docs/01-sources.md`](docs/01-sources.md)
+## Running Phase 1
+
+One-time setup (see [`scripts/bootstrap.sh`](scripts/bootstrap.sh) for the full pin list):
+
+```bash
+export SI_ROOT=$(pwd); export SI_DEPS=$SI_ROOT/deps; export SI_CACHE=$SI_ROOT/cache
+bash scripts/bootstrap.sh       # venv + deps + sandbox-fusion image pull
+```
+
+Baseline anchor (~45 s on one 3090):
+
+```bash
+python -m si.cli anchor --out runs/base_humaneval_plus.json
+```
+
+Full Phase 1 training cycle (~12–16 h wall on one 3090):
+
+```bash
+bash scripts/phase1_loop.sh phase1_v2_$(date +%Y%m%d_%H%M) 50 5 32 8
+#                                    ^run_id                  ^gens ^anchor_every ^proposals/type ^mc_rollouts
+```
+
+Monitor a live run (or after the fact):
+
+```bash
+tail -f runs/<run_id>/phase1.log      # heartbeat with GPU + CPU vitals per step
+ls -t runs/<run_id>/anchor_gen*.json  # anchor trajectory
+```
+
+A full description of what the orchestrator does is in [`docs/07-architecture.md`](docs/07-architecture.md).
+
+## One-screen summary
 
 ## One-screen summary
 

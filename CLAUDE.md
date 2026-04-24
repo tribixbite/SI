@@ -1,6 +1,6 @@
 # SI — Claude Instructions
 
-Home-scale compounding self-improvement: AZR + Elo tournament + island migration + in-place TTT on Gemma 4. Pre-alpha scaffolding; no trained checkpoints yet.
+Home-scale compounding self-improvement: AZR + Elo tournament + island migration + in-place TTT on Gemma 4. **Phase 1 implemented and actively training**; Phases 2–4 still scaffolding. Read `docs/07-architecture.md` for the as-built description before editing anything under `src/si/`.
 
 ## Where things live in this repo
 
@@ -19,7 +19,10 @@ scripts/         bootstrap.sh, 00_smoke_test.sh, 01_phase1_run.sh, 02_anchor_eva
 tests/test_elo.py  Only pytest file today; must stay green (pure math, no GPU)
 ```
 
-Implementation status: `elo.py` + `islands.py` + `anchor.py` decision logic are real; everything in `loop.py` raises NotImplementedError pointing to the relevant phase in `docs/04-implementation.md`. Match that idiom when adding stubs.
+Implementation status (2026-04-24):
+- **Phase 1 built** — AZRProposer, GemmaSolver, SandboxVerifier, MatchRunner, UnslothSITrainer (the default), HumanEval+ runner, CLI subcommands (`si rollout/train/anchor`), `scripts/phase1_loop.sh` orchestrator. 38/38 tests green. Base Gemma 4 E4B: 87.20% on HumanEval+.
+- **Phase 2+ scaffolded only** — `elo.py` + `islands.py` + `anchor.py` decision logic are real; `loop.py`'s multi-branch paths still raise NotImplementedError. When implementing Phase 2, match that idiom for still-unbuilt pieces.
+- Full module map is in `docs/07-architecture.md`.
 
 ## Hardware context (this machine)
 
@@ -35,16 +38,23 @@ Implementation status: `elo.py` + `islands.py` + `anchor.py` decision logic are 
 Phase 0 bootstrap expects `SI_ROOT=$HOME/SI` by default; this repo lives at `~/git/SI` instead. Override before running:
 
 ```bash
-export SI_ROOT=$(pwd)
-export SI_DEPS=$SI_ROOT/deps
-export SI_CACHE=$SI_ROOT/cache
-bash scripts/bootstrap.sh     # clones AZR/verl/RoboPhD/openevolve, installs deps, starts sandbox
-bash scripts/00_smoke_test.sh # pytest + vLLM sanity + sandbox health
-bash scripts/01_phase1_run.sh # AZR self-play on Gemma 4 E4B
-bash scripts/02_anchor_eval.sh <run_id>
+export SI_ROOT=$(pwd); export SI_DEPS=$SI_ROOT/deps; export SI_CACHE=$SI_ROOT/cache
+bash scripts/bootstrap.sh         # venv + deps + sandbox-fusion image pull
+pytest tests/ -q                  # 38/38 should pass; no GPU needed for most
+
+# Baseline anchor (~45s on one 3090):
+python -m si.cli anchor --out runs/base_humaneval_plus.json
+
+# Full Phase 1 training cycle (~12–16h on one 3090):
+bash scripts/phase1_loop.sh phase1_v2_$(date +%Y%m%d_%H%M) 50 5 32 8
+#                                    ^id                      ^gens ^anchor_every ^proposals/type ^mc_rollouts
+
+# Monitor:
+tail -f runs/<id>/phase1.log       # heartbeat lines (gpu_used, ram, step transitions)
+ls -t runs/<id>/anchor_gen*.json   # anchor trajectory
 ```
 
-Tests only (no GPU, fast): `pytest tests/ -q`.
+The legacy `scripts/01_phase1_run.sh` / `02_anchor_eval.sh` are stubs from the original spec; the working orchestrator is `scripts/phase1_loop.sh`.
 
 ## Non-negotiables (baked into the design — don't quietly violate)
 
@@ -52,8 +62,10 @@ Tests only (no GPU, fast): `pytest tests/ -q`.
 - **Zero external training data.** No MBPP, no HumanEval problems, no CodeAlpaca in training. Anchor set is eval-only, hash-verified at startup, kept in memory (see `anchor.anchor_hash_check`).
 - **Verifier sandboxing.** Never call `subprocess.run` on proposer/solver output outside the sandbox. Proposer/solver output is *data*, not code. `docs/03-stack.md` §"The trust model".
 - **`use_cache=True` for Gemma 4.** Flipping to False corrupts attention on 31B / 26B-A4B. Already the default in `ModelConfig`; don't override.
-- **Uncommitted config = no run.** `scripts/01_phase1_run.sh` refuses to start if `configs/` has uncommitted changes. Keep that discipline.
-- **`SI_CACHE`, `$SI_DEPS` are sacred paths.** Everything regenerable (weights, traces, checkpoints) lives there and is gitignored. Never write run artifacts under `src/`.
+- **Gemma 4 chat template is mandatory** for the -it variants. Raw completion produces repetition loops. `GemmaLLM.chat_batch` always wraps in chat format; don't bypass.
+- **LoRA scope = language_model only.** Gemma 4 is multimodal — its q/k/v/o/gate/up/down_proj names appear in vision_tower and audio_tower too. Use the regex in `trainer_unsloth.py` to scope. See `memory/project_gemma4_eager_attn_training.md` + the Phase 1-v2 commit message for the full story.
+- **Uncommitted config/code = no run.** `scripts/phase1_loop.sh` refuses to start if `configs/` or `src/si/` have uncommitted changes. Keep that discipline.
+- **`SI_CACHE`, `$SI_DEPS` are sacred paths.** Everything regenerable (weights, traces, checkpoints, merged model dirs) lives there and is gitignored. Never write run artifacts under `src/`.
 
 ## Editing conventions
 
