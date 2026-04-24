@@ -122,3 +122,33 @@ Strongest hit: **SD-Zero (Apr 13, 2026)** — published 10 days ago. Self-distil
 Also note: ReflexiCoder-8B hit 87.20% HumanEval+ (our base!). Our +5 pp target on that single anchor may be the wrong KPI. Recommend adding MBPP+ or LiveCodeBench v6 as secondary anchor before Phase 1-v3.
 
 ---
+
+## 2026-04-24 05:00 UTC — scan #4 (hourly check; gen 7 train-start)
+
+Run status: gen 5 anchor **failed** due to nested adapter-path bug (fixed in commit 766adb6; takes effect at gen 10 anchor). Gen 6 completed in 29 min; gen 7 train running. Run still healthy.
+
+Queried for generic "self-improvement efficient" — mostly resurfacing older papers. Two worth noting:
+
+### IMM — Iterative Model Merging (arXiv:2503.02103, Mar 2025)
+
+- **What:** Self-improved models exhibit "superficial self-improved reasoners" — ID accuracy up but OOD down, because weight updates concentrate in less reasoning-critical layers. IMM merges original + self-improved weights to preserve generalization.
+- **Why it matters to SI:** Directly relevant to our **anchor-revert rule**. Our current revert is a hard rollback. IMM gives a softer recovery: merge back toward base when the anchor regresses, preserving ID gains while recovering OOD. Could replace the binary commit/revert with a continuous "drift control."
+- **Integration effort:** Low — a merge function called when `should_revert` fires. Fits neatly into `anchor.py`.
+- **Decision:** **Defer, consider for Phase 2.** Revert rule is a sharper defense for now; IMM is a sophistication worth adding once Phase 1 shows any genuine gain to preserve.
+
+### S²R — Teach Self-Verify + Self-Correct via RL (arXiv:2502.12853, Feb 2025)
+
+- **What:** SFT on 3.1k curated self-verification samples, then outcome + process RL. Qwen2.5-math-7B: 51.0% → 81.6% on math benchmarks.
+- **Why it matters:** Related to SD-Zero's dense-supervision angle; specifically targets verification + correction. Our AZR has a verifier (sandbox) but no *self*-verification signal.
+- **Decision:** **Skip for now.** SD-Zero covers the same territory more directly and is newer.
+
+### Generation-Verification Gap (arXiv:2412.02674, Dec 2024)
+
+- **What:** Formalizes when self-improvement is possible. Scales monotonically with pretraining FLOPs.
+- **Decision:** **Cite.** Theoretical backing for why we expect Gemma 4 E4B (a relatively small pretrain) to plateau quickly — matches our observation.
+
+### Summary of scan #4
+
+No new top-tier adoption candidate. SD-Zero remains #1. IMM is a promising replacement for hard anchor revert; park for Phase 2.
+
+---
