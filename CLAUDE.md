@@ -20,9 +20,22 @@ tests/test_elo.py  Only pytest file today; must stay green (pure math, no GPU)
 ```
 
 Implementation status (2026-04-24):
-- **Phase 1 built** — AZRProposer, GemmaSolver, SandboxVerifier, MatchRunner, UnslothSITrainer (the default), HumanEval+ runner, CLI subcommands (`si rollout/train/anchor`), `scripts/phase1_loop.sh` orchestrator. 38/38 tests green. Base Gemma 4 E4B: 87.20% on HumanEval+.
+- **Phase 1 built + validated** — AZRProposer, GemmaSolver, SandboxVerifier, MatchRunner, UnslothSITrainer (RL-ZVP+F-GRPO), SSD trainer (arXiv:2604.01193), HumanEval+ runner, **LCB v6 runner** (1054 problems), CLI subcommands (`si rollout/train/anchor/ssd-sample/ssd-train`). 49/49 tests green.
+- **Primary anchor = LiveCodeBench v6** (21.92% base, lots of headroom). HumanEval+ is secondary/format-regression-detector only (87.20% base = 8B-class zero-RL capacity ceiling per scan #3).
+- **Key finding (research-scan.md §2026-04-24 14:20)**: all three training approaches (vanilla GRPO, RL-ZVP, SSD) teach the same per-difficulty signature on LCB v6 — lose easy, gain medium, no effect on hard. SSD is the cleanest (+10 medium, −2 easy, 0 hard). That's real AZR-paradigm signal; the "plateau" on HumanEval+ was anchor-mismatch, not a training failure.
 - **Phase 2+ scaffolded only** — `elo.py` + `islands.py` + `anchor.py` decision logic are real; `loop.py`'s multi-branch paths still raise NotImplementedError. When implementing Phase 2, match that idiom for still-unbuilt pieces.
-- Full module map is in `docs/07-architecture.md`.
+- Full module map is in `docs/07-architecture.md`; training trajectory in `docs/research-scan.md`.
+
+### Current scores (2026-04-24)
+
+| Model | HumanEval+ | LCB v6 | LCB easy / medium / hard |
+|---|---|---|---|
+| Base (`google/gemma-4-E4B-it`) | 143/164 = 87.20% | 231/1054 = 21.92% | 52.17 / 11.78 / 5.14 |
+| v2 gen_10 (vanilla GRPO) | 141/164 = 85.98% | 232/1054 = 22.01% | 50.93 / 13.61 / 4.57 |
+| v3 gen_10 (RL-ZVP+F-GRPO) | 140/164 = 85.37% | 231/1054 = 21.92% | 50.31 / 13.87 / 4.57 |
+| SSD v1 (500 tasks × 8 cand) | 139/164 = 84.76% | 239/1054 = 22.68% | 51.55 / 14.40 / 5.14 |
+
+Target: +5 pp on LCB v6 (21.92 → 26.92). ssd_v2 (792 tasks × 16 cand, running) is the next data point.
 
 ## Hardware context (this machine)
 
