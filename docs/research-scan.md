@@ -152,3 +152,52 @@ Queried for generic "self-improvement efficient" — mostly resurfacing older pa
 No new top-tier adoption candidate. SD-Zero remains #1. IMM is a promising replacement for hard anchor revert; park for Phase 2.
 
 ---
+
+## 2026-04-24 06:12 UTC — scan #5 (gen 10 anchor REGRESSED to 85.98%)
+
+Trigger: first trained anchor came in at 141/164 = 85.98% vs base 143/164 = 87.20% (drop of 1.22 pp, within the 2% tolerance but directionally wrong). Queried for GRPO collapse / small-group-size / reward-noise literature specifically.
+
+**Mother lode.** Multiple recent papers describe our exact failure mode:
+
+### EBPO — Empirical Bayes Policy Optimization (arXiv:2602.05165, 5 Feb 2026) 🎯 NEW TOP HIT
+
+- **What:** Directly names the failure modes we're seeing: "GRPO suffers from high estimator variance under computational constraints (**small group sizes**) and vanishing gradient signals in saturated failure regimes where all responses yield identical zero rewards." Proposes a shrinkage estimator (Welford's online algorithm) that borrows strength from the policy's **global** accumulated statistics when the local group is degenerate. **Theoretically guarantees non-vanishing penalty signals in failure scenarios.**
+- **Why it matters to SI:** We have `num_generations=2` (small group), and `frac_reward_zero_std=1` in nearly every step (saturated failure). EBPO was literally designed for this. Benchmarks: outperforms GRPO across AIME + OlympiadBench, specifically strong at small group sizes.
+- **Integration effort:** Low-medium. It's a loss-function change, no new forward passes. Patches TRL's GRPO advantage computation with a shrinkage term. Shares infra with current trainer.
+- **Decision:** **Promote to #1 Phase 1.5 candidate, above SD-Zero.** Lighter-weight and targets our exact constraint. SD-Zero stays as #2.
+- **Reference:** https://hf.co/papers/2602.05165
+
+### LLD / LLDS — Lazy Likelihood Displacement (arXiv:2512.04220, 3 Dec 2025)
+
+- **What:** Characterizes GRPO collapse as **Lazy Likelihood Displacement**: systematic reduction in likelihood of both correct and incorrect responses. Three-phase trajectory: "early stagnation → steady decay → accelerated collapse." Proposes LLDS, a lightweight likelihood-preserving regularization that activates only when a trajectory's likelihood decreases and touches only the responsible tokens. **+37.8 % on Qwen2.5-3B, +32 % on Qwen2.5-7B.**
+- **Why it matters:** Our gen 0 → 10 trajectory (87.20% → 85.98%) IS early stagnation. LLDS is a preemptive defense against the decay phase.
+- **Integration effort:** Low. Regularization term on top of existing GRPO loss. Complements EBPO (they fix different aspects).
+- **Decision:** **Adopt alongside EBPO in Phase 1.5.** Bundle.
+
+### Prompt Augmentation for GRPO (arXiv:2602.03190, 3 Feb 2026)
+
+- **What:** Fixed reasoning prompts during training cause entropy collapse. Augmenting with diverse templates/formats prevents collapse, stable scaling to long training without KL regularization.
+- **Why it matters:** Our system prompt is fixed (`_SYSTEM_SOLVER` / `_SYSTEM_PROPOSER`). Paper argues this contributes to the very instability we're seeing.
+- **Integration effort:** Very low. Randomize the system prompt among a small pool of templates for each rollout.
+- **Decision:** **Adopt in Phase 1.5 — cheap win.** Add a template pool to `prompts.py`.
+
+### S-GRPO, GMPO, GTPO, Dr.DPO, NoisyGRPO
+
+- Each proposes a different correction to GRPO's instability: noise-aware advantage weights (S-GRPO), geometric-mean policy loss (GMPO), trajectory-level conflict-token protection (GTPO), distributional robustness (Dr.DPO), noise injection + Bayesian estimation (NoisyGRPO).
+- **Decision:** **Skip for Phase 1.5.** EBPO + LLDS + prompt augmentation cover the same failure modes with lower integration cost. Reconsider if EBPO doesn't fix things.
+
+### Summary of scan #5 — rankings after gen 10 regression
+
+Adoption priority for **Phase 1.5** (after the v2 run concludes):
+
+| # | Method | Effort | Targets | Expected gain vs v2 |
+|---|---|---|---|---|
+| 1 | **EBPO** + Welford shrinkage | Low-med | Small-group + zero-std degeneracy | High — direct fix |
+| 2 | **LLDS** likelihood regularizer | Low | Prevents early-stagnation → decay | Medium — bundle with EBPO |
+| 3 | **Prompt augmentation** (template pool) | Very low | Entropy collapse from fixed system prompt | Small but cheap |
+| 4 | **SD-Zero** reviser | High | Binary → dense supervision | High if ceiling is the real problem |
+| 5 | **MBPP+ secondary anchor** | Low | HumanEval+ ceiling at 8B ~87% | Unblocks measurement |
+
+**Plan:** Let v2 finish OR stop at gen 15 if still regressing. Then Phase 1.5 = EBPO + LLDS + prompt aug (bundled into one release) → measure → if still insufficient, add SD-Zero.
+
+---
