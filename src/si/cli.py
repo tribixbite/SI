@@ -205,10 +205,29 @@ def anchor(
     from si.verifier import SandboxContainer
 
     print(f"[bold cyan]SI anchor[/bold cyan] adapter={adapter or '(base)'} max_problems={max_problems}")
+    # vLLM 0.19.1 doesn't support LoRA on Gemma4ForConditionalGeneration yet,
+    # so we PEFT-merge adapter into base on disk first, then point vLLM at the
+    # merged dir. Subsequent anchors on the same adapter reuse the merged dir.
+    load_path = model
+    if adapter:
+        from hashlib import sha256
+        h = sha256(Path(adapter).resolve().as_posix().encode()).hexdigest()[:16]
+        merged_path = f"/home/matilda/git/SI/cache/_merged/{h}"
+        if not Path(merged_path, "config.json").exists():
+            import subprocess, sys
+            print(f"  merging adapter into base → {merged_path}")
+            # Invoke via absolute path so the anchor command is not sensitive to cwd.
+            merge_script = str(Path(__file__).resolve().parent.parent.parent / "scripts" / "merge_and_anchor.py")
+            subprocess.check_call(
+                [sys.executable, merge_script,
+                 "--adapter", adapter, "--merged-out", merged_path, "--skip-anchor"]
+            )
+        load_path = merged_path
+
     container = SandboxContainer()
     container.start()
     try:
-        llm = GemmaLLM(model, cuda_visible_devices="1")
+        llm = GemmaLLM(load_path, cuda_visible_devices="1")
         result = humaneval_plus_pass_at_1(
             llm, max_problems=max_problems, timeout_s=10.0, temperature=0.2
         )

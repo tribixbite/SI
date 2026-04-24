@@ -20,7 +20,7 @@ from __future__ import annotations
 
 # Unsloth patches HF internals on import; do this first.
 import unsloth  # noqa: F401, I001
-from unsloth import FastVisionModel
+from unsloth import FastModel
 
 import logging
 from dataclasses import dataclass
@@ -200,23 +200,29 @@ class UnslothSITrainer:
         self.verifier = verifier
         Path(cfg.output_dir).mkdir(parents=True, exist_ok=True)
 
-        log.info("Loading Unsloth FastVisionModel from %s", cfg.model_path)
-        self.model, self.tokenizer = FastVisionModel.from_pretrained(
+        log.info("Loading Unsloth FastModel from %s", cfg.model_path)
+        self.model, self.tokenizer = FastModel.from_pretrained(
             model_name=cfg.model_path,
             max_seq_length=cfg.max_seq_length,
             load_in_4bit=cfg.load_in_4bit,
             fast_inference=False,
+            full_finetuning=False,
         )
-        self.model = FastVisionModel.get_peft_model(
+        # Restrict LoRA to the text tower. Gemma 4's multimodal tree has
+        # q_proj/k_proj/... in vision_tower and audio_tower too; the earlier
+        # FastVisionModel run applied LoRA to all three and diluted the signal
+        # across modalities the AZR task never exercised.
+        self.model = FastModel.get_peft_model(
             self.model,
             r=cfg.lora_rank,
-            target_modules=[
-                "q_proj", "k_proj", "v_proj", "o_proj",
-                "gate_proj", "up_proj", "down_proj",
-            ],
+            target_modules=r"^.*\blanguage_model\..*\.(q_proj|k_proj|v_proj|o_proj|gate_proj|up_proj|down_proj)$",
             lora_alpha=cfg.lora_rank * 2,
             use_gradient_checkpointing="unsloth",
             random_state=cfg.random_state,
+            finetune_vision_layers=False,
+            finetune_language_layers=True,
+            finetune_attention_modules=True,
+            finetune_mlp_modules=True,
         )
 
     def _grpo_args(self) -> GRPOConfig:

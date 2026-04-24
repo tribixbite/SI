@@ -12,6 +12,7 @@ import os
 from dataclasses import dataclass
 
 from vllm import LLM, SamplingParams
+from vllm.lora.request import LoRARequest
 
 log = logging.getLogger(__name__)
 
@@ -51,17 +52,29 @@ class GemmaLLM:
         max_model_len: int = 4096,
         enforce_eager: bool = True,
         cuda_visible_devices: str | None = "1",
+        lora_path: str | None = None,
+        max_lora_rank: int = 64,
     ) -> None:
         if cuda_visible_devices is not None:
             os.environ.setdefault("CUDA_VISIBLE_DEVICES", cuda_visible_devices)
-        log.info("Loading Gemma LLM from %s", model_path)
-        self.llm = LLM(
-            model=model_path,
-            dtype=dtype,
-            gpu_memory_utilization=gpu_memory_utilization,
-            max_model_len=max_model_len,
-            enforce_eager=enforce_eager,
-        )
+        log.info("Loading Gemma LLM from %s  lora=%s", model_path, lora_path)
+        llm_kwargs = {
+            "model": model_path,
+            "dtype": dtype,
+            "gpu_memory_utilization": gpu_memory_utilization,
+            "max_model_len": max_model_len,
+            "enforce_eager": enforce_eager,
+        }
+        if lora_path is not None:
+            llm_kwargs["enable_lora"] = True
+            llm_kwargs["max_lora_rank"] = max_lora_rank
+            llm_kwargs["max_loras"] = 1
+        self.llm = LLM(**llm_kwargs)
+        self._lora_request: LoRARequest | None = None
+        if lora_path is not None:
+            self._lora_request = LoRARequest(
+                lora_name="adapter", lora_int_id=1, lora_path=lora_path
+            )
 
     def chat_batch(
         self,
@@ -77,5 +90,8 @@ class GemmaLLM:
                 msgs.append({"role": "system", "content": system})
             msgs.append({"role": "user", "content": p})
             conversations.append(msgs)
-        outs = self.llm.chat(conversations, params.to_vllm())
+        chat_kwargs = {}
+        if self._lora_request is not None:
+            chat_kwargs["lora_request"] = self._lora_request
+        outs = self.llm.chat(conversations, params.to_vllm(), **chat_kwargs)
         return [[completion.text for completion in o.outputs] for o in outs]
