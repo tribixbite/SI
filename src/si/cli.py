@@ -459,6 +459,46 @@ def ssd_train(
     print(f"[green]adapter saved to[/green] {saved}")
 
 
+@app.command(name="proposer-sample")
+def proposer_sample(
+    samples_out: str = typer.Option(..., help="output proposer training samples.jsonl"),
+    proposals_per_type: int = typer.Option(64, help="tasks generated per type per gen"),
+    mc_rollouts: int = typer.Option(4, help="solver MC rollouts per task"),
+    n_gens: int = typer.Option(4, help="repeat the propose→score loop this many times"),
+    min_pass_rate: float = typer.Option(0.3),
+    max_pass_rate: float = typer.Option(0.7),
+    model: str = typer.Option(DEFAULT_MODEL, help="Gemma 4 path for vLLM"),
+) -> None:
+    """Mix 1-A stage 1: collect medium-difficulty proposer tasks via MC scoring."""
+    _setup_logging()
+    from si.llm import GemmaLLM
+    from si.proposer_train import build_match_runner, collect_proposer_training_pairs
+    from si.ssd import write_samples
+    from si.verifier import SandboxContainer, SandboxVerifier
+
+    print(f"[bold cyan]SI proposer-sample[/bold cyan] {n_gens} gens × {proposals_per_type} tasks/type × {mc_rollouts} MC")
+    llm = GemmaLLM(model, cuda_visible_devices="1")
+    container = SandboxContainer()
+    verifier = SandboxVerifier(container=container)
+    all_pairs = []
+    try:
+        for g in range(n_gens):
+            runner = build_match_runner(llm=llm, verifier=verifier, gen=g)
+            pairs = collect_proposer_training_pairs(
+                runner,
+                proposals_per_type=proposals_per_type,
+                mc_rollouts=mc_rollouts,
+                min_pass_rate=min_pass_rate,
+                max_pass_rate=max_pass_rate,
+            )
+            all_pairs.extend(pairs)
+            print(f"  gen {g+1}/{n_gens}: kept {len(pairs)} (cum {len(all_pairs)})")
+    finally:
+        verifier.close()
+    write_samples(all_pairs, samples_out)
+    print(f"[green]wrote[/green] {samples_out} ({len(all_pairs)} medium-difficulty proposer pairs)")
+
+
 @app.command(name="dpo-train")
 def dpo_train(
     samples_passing: str = typer.Option(..., help="passing samples.jsonl"),
