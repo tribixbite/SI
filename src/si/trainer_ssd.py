@@ -38,6 +38,7 @@ class SSDTrainerConfig:
     per_device_train_batch_size: int = 1
     gradient_accumulation_steps: int = 8
     epochs: int = 2
+    max_steps: int = -1  # if > 0, overrides epochs and stops at this step count
     grad_clip_norm: float = 1.0
     random_state: int = 3407
     packing: bool = True  # packs multiple samples into max_seq_length for efficiency
@@ -108,6 +109,7 @@ class SSDTrainer:
             per_device_train_batch_size=self.cfg.per_device_train_batch_size,
             gradient_accumulation_steps=self.cfg.gradient_accumulation_steps,
             num_train_epochs=self.cfg.epochs,
+            max_steps=self.cfg.max_steps,
             max_grad_norm=self.cfg.grad_clip_norm,
             max_seq_length=self.cfg.max_seq_length,
             packing=self.cfg.packing,

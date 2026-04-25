@@ -393,6 +393,8 @@ def ssd_train(
     epochs: int = typer.Option(2),
     lr: float = typer.Option(2e-5),
     lora_rank: int = typer.Option(32),
+    lora_dropout: float = typer.Option(0.05),
+    max_steps: int = typer.Option(-1, help="if > 0 overrides epochs"),
 ) -> None:
     """Stage 2 of SSD: SFT on verifier-passing samples via Unsloth FastModel."""
     _setup_logging()
@@ -407,6 +409,8 @@ def ssd_train(
         lora_rank=lora_rank,
         lr=lr,
         epochs=epochs,
+        lora_dropout=lora_dropout,
+        max_steps=max_steps,
     )
     trainer = SSDTrainer(cfg)
     saved = trainer.train_on_samples(all_samples)
