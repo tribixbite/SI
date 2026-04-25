@@ -198,6 +198,7 @@ def anchor(
     model: str = typer.Option(DEFAULT_MODEL),
     out: str | None = typer.Option(None, help="optional JSON output path"),
     benchmark: str = typer.Option("humaneval", help="humaneval | lcb | lcb-functional | lcb-stdin"),
+    bon: int = typer.Option(1, help="Best-of-N: generate N candidates per problem; pass if any passes (LCB only)"),
 ) -> None:
     """Evaluate a branch (adapter or base) on HumanEval+ or LiveCodeBench v6."""
     _setup_logging()
@@ -255,9 +256,10 @@ def anchor(
                 max_problems=max_problems,
                 testtype_filter=tt,
                 temperature=0.2,
+                n_candidates=bon,
             )
-            label = f"LCB v6 ({tt or 'all'})"
-            extra = {"per_difficulty": result.per_difficulty}
+            label = f"LCB v6 ({tt or 'all'}, BoN={bon})"
+            extra = {"per_difficulty": result.per_difficulty, "bon": bon}
         else:
             raise typer.BadParameter(f"unknown benchmark {benchmark!r}")
         print(
@@ -298,6 +300,9 @@ def ssd_sample(
     max_tokens: int = typer.Option(512),
     max_tasks: int | None = typer.Option(None, help="subsample tasks; None = all"),
     model: str = typer.Option(DEFAULT_MODEL, help="Gemma 4 HF path for vLLM sampling"),
+    keep_failing: bool = typer.Option(False, help="also save failing samples to <samples_out>.failing.jsonl (Mix 2 DPO)"),
+    min_pass_rate: float = typer.Option(0.0, help="drop tasks where pass_rate < this (Mix 1 difficulty stratification)"),
+    max_pass_rate: float = typer.Option(1.0, help="drop tasks where pass_rate > this"),
 ) -> None:
     """Stage 1 of SSD: sample N candidates per task, keep verifier-passing ones."""
     _setup_logging()
@@ -361,6 +366,7 @@ def ssd_sample(
     container = SandboxContainer()
     verifier = SandboxVerifier(container=container)
     all_passing: list[SSDSample] = []
+    all_failing: list[SSDSample] = []
     try:
         for i, task in enumerate(tasks):
             cands = all_candidates[i] or []
@@ -370,18 +376,54 @@ def ssd_sample(
                 verifier=verifier,
                 system_prompt=system_prompts[i],
                 user_prompt=user_prompts[i],
+                keep_failing=keep_failing,
             )
-            all_passing.extend(packed)
+            if keep_failing:
+                p, f = packed
+                all_passing.extend(p)
+                all_failing.extend(f)
+            else:
+                all_passing.extend(packed)
             if (i + 1) % 32 == 0:
-                print(f"  verified {i+1}/{len(tasks)} tasks; kept {len(all_passing)} samples")
+                print(f"  verified {i+1}/{len(tasks)} tasks; kept {len(all_passing)} pass / {len(all_failing)} fail")
     finally:
         verifier.close()
 
+    # Difficulty stratification (Mix 1 E): drop tasks where pass_rate falls outside [min, max].
+    if min_pass_rate > 0 or max_pass_rate < 1.0:
+        per_task_pass: dict[str, list[SSDSample]] = {}
+        per_task_fail: dict[str, list[SSDSample]] = {}
+        for s in all_passing:
+            per_task_pass.setdefault(s.task_id, []).append(s)
+        for s in all_failing:
+            per_task_fail.setdefault(s.task_id, []).append(s)
+        kept_pass: list[SSDSample] = []
+        kept_fail: list[SSDSample] = []
+        kept_tasks = 0
+        for tid in set(per_task_pass) | set(per_task_fail):
+            np = len(per_task_pass.get(tid, []))
+            nf = len(per_task_fail.get(tid, []))
+            total = np + nf if (np + nf) > 0 else n_samples
+            pr = np / max(1, total)
+            if min_pass_rate <= pr <= max_pass_rate:
+                kept_pass.extend(per_task_pass.get(tid, []))
+                kept_fail.extend(per_task_fail.get(tid, []))
+                kept_tasks += 1
+        print(
+            f"  difficulty stratification [{min_pass_rate}, {max_pass_rate}]: "
+            f"{kept_tasks} tasks kept, {len(kept_pass)}/{len(all_passing)} passing, "
+            f"{len(kept_fail)}/{len(all_failing)} failing"
+        )
+        all_passing, all_failing = kept_pass, kept_fail
+
     write_samples(all_passing, samples_out)
+    if keep_failing and all_failing:
+        write_samples(all_failing, samples_out + ".failing.jsonl")
     pass_rate = len(all_passing) / max(1, len(tasks) * n_samples)
+    extra = f" + {len(all_failing)} failing" if keep_failing else ""
     print(
         f"[green]wrote[/green] {samples_out} "
-        f"({len(all_passing)} passing / {len(tasks)*n_samples} generated = {pass_rate:.2%})"
+        f"({len(all_passing)} passing{extra} / {len(tasks)*n_samples} generated = {pass_rate:.2%})"
     )
 
 
@@ -415,6 +457,44 @@ def ssd_train(
     trainer = SSDTrainer(cfg)
     saved = trainer.train_on_samples(all_samples)
     print(f"[green]adapter saved to[/green] {saved}")
+
+
+@app.command(name="dpo-train")
+def dpo_train(
+    samples_passing: str = typer.Option(..., help="passing samples.jsonl"),
+    samples_failing: str = typer.Option(..., help="failing samples.jsonl"),
+    adapter_out: str = typer.Option(..., help="output adapter dir"),
+    warm_start_adapter: str | None = typer.Option(None, help="optional adapter to load as starting point (e.g. ssd_v5)"),
+    model: str = typer.Option(DEFAULT_TRAIN_MODEL),
+    epochs: int = typer.Option(1),
+    max_steps: int = typer.Option(-1),
+    lr: float = typer.Option(5e-6),
+    beta: float = typer.Option(0.1),
+    max_pairs_per_task: int = typer.Option(4),
+) -> None:
+    """Mix 2 stage 2: DPO on (passing, failing) preference pairs."""
+    _setup_logging()
+    from si.dpo import build_dpo_pairs, write_dpo_jsonl
+    from si.ssd import read_samples
+    from si.trainer_dpo import DPOSITrainer, DPOTrainerConfig
+
+    passing = read_samples(samples_passing)
+    failing = read_samples(samples_failing)
+    print(f"[bold cyan]SI dpo-train[/bold cyan] {len(passing)} pass / {len(failing)} fail")
+    pairs = build_dpo_pairs(passing, failing, max_pairs_per_task=max_pairs_per_task)
+    write_dpo_jsonl(pairs, str(Path(adapter_out).parent / "dpo_pairs.jsonl"))
+    print(f"  built {len(pairs)} preference pairs")
+    cfg = DPOTrainerConfig(
+        model_path=model,
+        output_dir=adapter_out,
+        epochs=epochs,
+        max_steps=max_steps,
+        lr=lr,
+        beta=beta,
+    )
+    trainer = DPOSITrainer(cfg, warm_start_adapter=warm_start_adapter)
+    saved = trainer.train_on_pairs(pairs)
+    print(f"[green]DPO adapter saved to[/green] {saved}")
 
 
 @app.command()

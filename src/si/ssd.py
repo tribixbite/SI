@@ -91,20 +91,30 @@ def verify_and_pack(
     verifier: SandboxVerifier,
     system_prompt: str,
     user_prompt: str,
-) -> list[SSDSample]:
+    keep_failing: bool = False,
+) -> list[SSDSample] | tuple[list[SSDSample], list[SSDSample]]:
     """Run the verifier against each candidate, keep passing ones.
 
-    Returns typed `SSDSample`s with the prompt-as-chat-messages attached so the
-    SFT trainer can render them with the tokenizer's chat template.
+    With keep_failing=True, returns (passing, failing) where failing samples
+    are usable for DPO preference pairs.
     """
     passing: list[SSDSample] = []
+    failing: list[SSDSample] = []
     messages = [
         {"role": "system", "content": [{"type": "text", "text": system_prompt}]},
         {"role": "user", "content": [{"type": "text", "text": user_prompt}]},
     ]
     for text in candidates:
         body = extract_body(task, text)
+        sample = SSDSample(
+            task_id=task.task_id,
+            task_type=task.task_type.value,
+            prompt_messages=messages,
+            completion_text=text.rstrip(),
+        )
         if not body:
+            if keep_failing:
+                failing.append(sample)
             continue
         sol = Solution(
             task_id=task.task_id, solver_branch_id="ssd", body=body, trace=text, walltime_ms=0
@@ -113,18 +123,14 @@ def verify_and_pack(
             result = verifier.verify(task, sol)
         except Exception as e:
             log.warning("verifier error on %s: %s", task.task_id, e)
+            if keep_failing:
+                failing.append(sample)
             continue
-        if not result.passed:
-            continue
-        passing.append(
-            SSDSample(
-                task_id=task.task_id,
-                task_type=task.task_type.value,
-                prompt_messages=messages,
-                completion_text=text.rstrip(),
-            )
-        )
-    return passing
+        if result.passed:
+            passing.append(sample)
+        elif keep_failing:
+            failing.append(sample)
+    return (passing, failing) if keep_failing else passing
 
 
 def write_samples(samples: list[SSDSample], out_path: str) -> None:

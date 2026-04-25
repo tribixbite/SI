@@ -190,8 +190,14 @@ def lcb_pass_at_1(
     temperature: float = 0.2,
     max_completion_tokens: int = 1024,
     timeout_s: float = 10.0,
+    n_candidates: int = 1,
 ) -> LCBResult:
-    """Generate one completion per LCB problem, execute in sandbox, return pass@1."""
+    """Generate `n_candidates` completions per LCB problem; pass = ANY candidate passes.
+
+    n_candidates>1 implements Best-of-N test-time compute scaling. With our
+    sandbox verifier, "best" = "first that passes all tests" — equivalent to
+    BoN with a hard verifier. Inference-only; no training cost.
+    """
     problems = load_lcb(version, data_dir)
     if testtype_filter:
         problems = [p for p in problems if p.testtype == testtype_filter]
@@ -199,9 +205,13 @@ def lcb_pass_at_1(
         problems = problems[:max_problems]
 
     t0 = time.time()
-    log.info("LCB %s: generating %d completions...", version, len(problems))
+    log.info("LCB %s: generating %d × %d completions...", version, len(problems), n_candidates)
     user_prompts = [_build_user_prompt(p) for p in problems]
-    params = GenParams(temperature=temperature, top_p=0.95, max_tokens=max_completion_tokens)
+    # For n>1 we want diverse samples; raise temp from 0.2 to 0.8 unless caller overrode.
+    sampling_temp = temperature if n_candidates == 1 else max(temperature, 0.8)
+    params = GenParams(
+        temperature=sampling_temp, top_p=0.95, max_tokens=max_completion_tokens, n=n_candidates
+    )
     nested = llm.chat_batch(user_prompts, params, system=_SYSTEM_LCB)
     log.info("LCB: generation done in %.1fs", time.time() - t0)
 
@@ -209,8 +219,12 @@ def lcb_pass_at_1(
     per_diff: dict[str, list[int]] = {"easy": [0, 0], "medium": [0, 0], "hard": [0, 0], "unknown": [0, 0]}
     passed = 0
     for prob, comp_list in zip(problems, nested, strict=True):
-        code = _extract_code(comp_list[0])
-        ok = _check_problem(prob, code, timeout_s=timeout_s)
+        ok = False
+        for cand in comp_list:
+            code = _extract_code(cand)
+            if _check_problem(prob, code, timeout_s=timeout_s):
+                ok = True
+                break  # any pass = problem passes
         per_problem[prob.problem_id] = ok
         d = prob.difficulty if prob.difficulty in per_diff else "unknown"
         per_diff[d][1] += 1
@@ -219,7 +233,10 @@ def lcb_pass_at_1(
             per_diff[d][0] += 1
 
     wall_s = time.time() - t0
-    log.info("LCB: %d/%d passed (%.1f%%) in %.1fs", passed, len(problems), 100.0 * passed / max(1, len(problems)), wall_s)
+    log.info(
+        "LCB: %d/%d passed (%.1f%%) in %.1fs (BoN=%d, temp=%.2f)",
+        passed, len(problems), 100.0 * passed / max(1, len(problems)), wall_s, n_candidates, sampling_temp,
+    )
     return LCBResult(
         passed=passed,
         total=len(problems),
