@@ -34,6 +34,7 @@ Implementation status (2026-04-24):
 | ssd_v5 (500 × 16 × 1ep, dropout 0.0, 305 steps) | 84.76% | 23.53% | 53.42 / 15.18 / 5.14 | +1.61 |
 | **ssd_v7** (sampled from ssd_v5, same recipe) | 84.15% | 23.91% | 53.11 / 15.71 / 6.00 | +1.99 |
 | ssd_v8 (sampled from ssd_v7) | 81.71% | 22.68% | 50.31 / 14.40 / 6.29 | +0.76 ← chain saturated |
+| ssd_v9 (1500-task pool, warm v7, 305 steps) | 78.05% | 23.06% | 53.42 / 12.83 / 6.29 | +1.14 ← undertrained (0.57 ep) |
 | dpo_v1 (DPO warm-start ssd_v7) | 81.10% | 23.53% | 52.17 / 15.18 / 6.29 | +1.61 ← no gain |
 | base + BoN3 | — | 25.52% | 53.42 / 18.85 / 7.14 | +3.60 |
 | ssd_v7 + BoN3 | — | 26.47% | 54.66 / 19.90 / 7.71 | +4.55 |
