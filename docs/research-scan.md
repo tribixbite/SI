@@ -529,3 +529,23 @@ After v2/v3/SSD plateau, ran the three architecture-review mixes:
 - Would rank-64 LoRA break v7's saturation? Untested.
 - Does GRESO-style pre-rollout filter help SSD samples? Untested.
 
+
+## 2026-04-26 — base+BoN5: training × test-time NOT orthogonal
+
+Tested base+BoN5 to quantify training contribution at higher n. Surprise:
+ssd_v7's edge over base GROWS at BoN5 vs BoN3 (+2.09pp vs +0.95pp).
+
+| BoN | base | ssd_v7 | Δ train |
+|---|---|---|---|
+| 1 | 21.92 | 23.91 | +1.99 |
+| 3 | 25.52 | 26.47 | +0.95 |
+| 5 | 25.90 | 27.99 | +2.09 |
+| 8 | — | 28.46 | — |
+
+base+BoN3→5 only adds +0.38pp; ssd_v7+BoN3→5 adds +1.52pp. The trained
+distribution has more high-quality candidates that BoN can find, even
+though plain pass@1 is just +1.99pp.
+
+This argues: **improving training quality should amplify BoN at scale**.
+Hypothesis worth testing: rank=64 LoRA from base with 600 steps may
+beat rank=32+305 v7 by enough that vNEW+BoN8 > 28.46%.
