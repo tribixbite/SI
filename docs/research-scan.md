@@ -493,3 +493,39 @@ New direction — SSD self-distillation bootstrap instead of more GRPO first:
 Why this order over original EBPO-first plan: gen 10/15 plateau at 85.98% with identical per-problem pattern shows the problem isn't just gradient variance — the model is stuck in a local optimum where binary rewards produce no useful signal. SSD's dense SFT supervision should break the plateau from a different angle before we reintroduce the unstable GRPO loop.
 
 ---
+
+## 2026-04-26 — Three-mix evaluation + BoN ladder (target hit)
+
+After v2/v3/SSD plateau, ran the three architecture-review mixes:
+
+**Mix 3 — BoN test-time compute** (winner, training-free):
+- base+BoN3 = 25.52% (+3.60pp over base 21.92%)
+- ssd_v5+BoN3 = 26.19%, ssd_v7+BoN3 = 26.47%
+- ssd_v7+BoN5 = 27.99% ← crossed +5pp target
+- ssd_v7+BoN8 = 28.46% ← peak
+- BoN ladder marginal gain per extra n: 1→3 +0.85, 3→5 +0.76, 5→8 +0.16. Saturates past n=5.
+
+**Mix 2 — DPO warm-started from ssd_v7**:
+- LCB 23.53% (no gain over ssd_v7 23.91%) — DPO did not extract additional preference signal
+- HE+ regressed to 81.10% (-3.05pp vs ssd_v7) — format drift
+
+**Mix 1 — proposer-only adapter**:
+- Trained Gemma-as-proposer on 29 medium-difficulty pairs; tested directly on solver tasks
+- LCB 21.73%, HE+ 80.49% — adapter overfit to proposer prompts, broke solver
+- Conclusion: Mix 1 needs separate proposer/solver adapters (single-adapter setup conflates roles)
+
+**Iterative SSD chain**:
+- v5 (23.53) → v7 (23.91, sampled from v5) → v8 (22.68, sampled from v7, regressed)
+- v9 with 3× larger pool (1500 tasks) at 305 steps undertrained (0.57 epoch); LCB 23.06%, medium dropped sharply
+- Chain saturates past v7 under fixed 305-step / rank-32 budget
+
+**Key finding**: training and test-time-compute are nearly orthogonal at this scale.
+- Training (ssd_v5→v7): +1.99pp
+- Test-time BoN8: +6.54pp from base, +4.55pp from ssd_v7 baseline
+- Champion combo: ssd_v7 + BoN8 = 28.46% LCB v6 (+6.54pp)
+
+**Open questions**:
+- Does BoN gain on base alone match ssd_v7's gain at high n? (running base+BoN5)
+- Would rank-64 LoRA break v7's saturation? Untested.
+- Does GRESO-style pre-rollout filter help SSD samples? Untested.
+
