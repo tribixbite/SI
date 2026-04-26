@@ -37,9 +37,11 @@ Implementation status (2026-04-24):
 | dpo_v1 (DPO warm-start ssd_v7) | 81.10% | 23.53% | 52.17 / 15.18 / 6.29 | +1.61 ← no gain |
 | base + BoN3 | — | 25.52% | 53.42 / 18.85 / 7.14 | +3.60 |
 | ssd_v7 + BoN3 | — | 26.47% | 54.66 / 19.90 / 7.71 | +4.55 |
-| **ssd_v7 + BoN5** ← **CHAMPION** | — | **27.99%** | 55.28 / 21.73 / 9.71 | **+6.07** |
+| ssd_v7 + BoN5 | — | 27.99% | 55.28 / 21.73 / 9.71 | +6.07 |
+| **ssd_v7 + BoN8** ← **CHAMPION** | — | **28.46%** | 55.28 / 23.56 / 9.14 | **+6.54** |
 
-Target was +5 pp on LCB v6 (21.92 → 26.92); achieved +6.07 pp via best training adapter (ssd_v7) + BoN5 verifier-pick at test time. BoN3 alone gives +3.60 pp on base, training-free.
+BoN ladder marginal gain per extra n: 1→3 +0.85/n, 3→5 +0.76/n, 5→8 +0.16/n (saturates past n=5).
+Target was +5 pp on LCB v6 (21.92 → 26.92); achieved +6.54 pp via best training adapter (ssd_v7) + BoN8 verifier-pick at test time. BoN3 alone gives +3.60 pp on base, training-free.
 
 ## Hardware context (this machine)
 
