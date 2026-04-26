@@ -37,12 +37,13 @@ Implementation status (2026-04-24):
 | ssd_v9 (1500-task pool, warm v7, 305 steps) | 78.05% | 23.06% | 53.42 / 12.83 / 6.29 | +1.14 ← undertrained (0.57 ep) |
 | base + BoN5 | — | 25.90% | 54.66 / 18.85 / 7.14 | +3.98 |
 | ssd_v10 (rank 64, warm v7) | 81.10% | 23.24% | 52.48 / 14.40 / 6.00 | +1.32 ← rank scaling didn't compound |
-| ssd_v10 + BoN5 | — | 27.89% | 54.97 / 21.20 / **10.29** | +5.97 ← best hard% across all variants |
+| ssd_v10 + BoN5 | — | 27.89% | 54.97 / 21.20 / 10.29 | +5.97 |
+| **ssd_v10 + BoN8** ← **NEW CHAMPION** | — | **28.75%** | 55.90 / 21.73 / **11.43** | **+6.83** |
 | dpo_v1 (DPO warm-start ssd_v7) | 81.10% | 23.53% | 52.17 / 15.18 / 6.29 | +1.61 ← no gain |
 | base + BoN3 | — | 25.52% | 53.42 / 18.85 / 7.14 | +3.60 |
 | ssd_v7 + BoN3 | — | 26.47% | 54.66 / 19.90 / 7.71 | +4.55 |
 | ssd_v7 + BoN5 | — | 27.99% | 55.28 / 21.73 / 9.71 | +6.07 |
-| **ssd_v7 + BoN8** ← **CHAMPION** | — | **28.46%** | 55.28 / 23.56 / 9.14 | **+6.54** |
+| ssd_v7 + BoN8 | — | 28.46% | 55.28 / 23.56 / 9.14 | +6.54 |
 
 BoN ladder marginal gain per extra n: 1→3 +0.85/n, 3→5 +0.76/n, 5→8 +0.16/n (saturates past n=5).
 Target was +5 pp on LCB v6 (21.92 → 26.92); achieved +6.54 pp via best training adapter (ssd_v7) + BoN8 verifier-pick at test time. BoN3 alone gives +3.60 pp on base, training-free.
