@@ -26,16 +26,20 @@ Implementation status (2026-04-24):
 - **Phase 2+ scaffolded only** — `elo.py` + `islands.py` + `anchor.py` decision logic are real; `loop.py`'s multi-branch paths still raise NotImplementedError. When implementing Phase 2, match that idiom for still-unbuilt pieces.
 - Full module map is in `docs/07-architecture.md`; training trajectory in `docs/research-scan.md`.
 
-### Current scores (2026-04-24)
+### Current scores (2026-04-26) — TARGET HIT
 
-| Model | HumanEval+ | LCB v6 | LCB easy / medium / hard |
-|---|---|---|---|
-| Base (`google/gemma-4-E4B-it`) | 143/164 = 87.20% | 231/1054 = 21.92% | 52.17 / 11.78 / 5.14 |
-| v2 gen_10 (vanilla GRPO) | 141/164 = 85.98% | 232/1054 = 22.01% | 50.93 / 13.61 / 4.57 |
-| v3 gen_10 (RL-ZVP+F-GRPO) | 140/164 = 85.37% | 231/1054 = 21.92% | 50.31 / 13.87 / 4.57 |
-| SSD v1 (500 tasks × 8 cand) | 139/164 = 84.76% | 239/1054 = 22.68% | 51.55 / 14.40 / 5.14 |
+| Model | HumanEval+ | LCB v6 | LCB easy / medium / hard | Δ vs base |
+|---|---|---|---|---|
+| Base (`google/gemma-4-E4B-it`) | 87.20% | 21.92% | 52.17 / 11.78 / 5.14 | — |
+| ssd_v5 (500 × 16 × 1ep, dropout 0.0, 305 steps) | 84.76% | 23.53% | 53.42 / 15.18 / 5.14 | +1.61 |
+| **ssd_v7** (sampled from ssd_v5, same recipe) | 84.15% | 23.91% | 53.11 / 15.71 / 6.00 | +1.99 |
+| ssd_v8 (sampled from ssd_v7) | 81.71% | 22.68% | 50.31 / 14.40 / 6.29 | +0.76 ← chain saturated |
+| dpo_v1 (DPO warm-start ssd_v7) | 81.10% | 23.53% | 52.17 / 15.18 / 6.29 | +1.61 ← no gain |
+| base + BoN3 | — | 25.52% | 53.42 / 18.85 / 7.14 | +3.60 |
+| ssd_v7 + BoN3 | — | 26.47% | 54.66 / 19.90 / 7.71 | +4.55 |
+| **ssd_v7 + BoN5** ← **CHAMPION** | — | **27.99%** | 55.28 / 21.73 / 9.71 | **+6.07** |
 
-Target: +5 pp on LCB v6 (21.92 → 26.92). ssd_v2 (792 tasks × 16 cand, running) is the next data point.
+Target was +5 pp on LCB v6 (21.92 → 26.92); achieved +6.07 pp via best training adapter (ssd_v7) + BoN5 verifier-pick at test time. BoN3 alone gives +3.60 pp on base, training-free.
 
 ## Hardware context (this machine)
 
