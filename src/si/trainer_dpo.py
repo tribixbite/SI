@@ -74,13 +74,16 @@ class DPOSITrainer:
         Path(cfg.output_dir).mkdir(parents=True, exist_ok=True)
 
         log.info("Loading FastModel from %s (warm_start_adapter=%s)", cfg.model_path, warm_start_adapter)
-        self.model, self.tokenizer = FastModel.from_pretrained(
+        self.model, processor = FastModel.from_pretrained(
             model_name=cfg.model_path,
             max_seq_length=cfg.max_seq_length,
             load_in_4bit=cfg.load_in_4bit,
             fast_inference=False,
             full_finetuning=False,
         )
+        # Gemma 4 returns a multimodal processor; DPOTrainer's tokenizer.pad
+        # requires a plain tokenizer whose model_input_names starts with input_ids.
+        self.tokenizer = getattr(processor, "tokenizer", processor)
         self.model = FastModel.get_peft_model(
             self.model,
             r=cfg.lora_rank,
@@ -118,7 +121,6 @@ class DPOSITrainer:
             max_steps=self.cfg.max_steps,
             max_grad_norm=self.cfg.grad_clip_norm,
             max_length=self.cfg.max_seq_length,
-            max_prompt_length=self.cfg.max_prompt_length,
             beta=self.cfg.beta,
             logging_steps=1,
             save_strategy="no",

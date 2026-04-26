@@ -437,6 +437,7 @@ def ssd_train(
     lora_rank: int = typer.Option(32),
     lora_dropout: float = typer.Option(0.05),
     max_steps: int = typer.Option(-1, help="if > 0 overrides epochs"),
+    warm_start_adapter: str | None = typer.Option(None, help="optional adapter to warm-start from (e.g. ssd_v7)"),
 ) -> None:
     """Stage 2 of SSD: SFT on verifier-passing samples via Unsloth FastModel."""
     _setup_logging()
@@ -454,7 +455,7 @@ def ssd_train(
         lora_dropout=lora_dropout,
         max_steps=max_steps,
     )
-    trainer = SSDTrainer(cfg)
+    trainer = SSDTrainer(cfg, warm_start_adapter=warm_start_adapter)
     saved = trainer.train_on_samples(all_samples)
     print(f"[green]adapter saved to[/green] {saved}")
 

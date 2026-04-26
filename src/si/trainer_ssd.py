@@ -72,11 +72,11 @@ def samples_to_dataset(samples: list[SSDSample], tokenizer) -> Dataset:
 class SSDTrainer:
     """Unsloth FastModel + TRL SFTTrainer wrapper for SSD training."""
 
-    def __init__(self, cfg: SSDTrainerConfig) -> None:
+    def __init__(self, cfg: SSDTrainerConfig, *, warm_start_adapter: str | None = None) -> None:
         self.cfg = cfg
         Path(cfg.output_dir).mkdir(parents=True, exist_ok=True)
 
-        log.info("Loading Unsloth FastModel from %s", cfg.model_path)
+        log.info("Loading Unsloth FastModel from %s (warm_start_adapter=%s)", cfg.model_path, warm_start_adapter)
         self.model, self.tokenizer = FastModel.from_pretrained(
             model_name=cfg.model_path,
             max_seq_length=cfg.max_seq_length,
@@ -97,6 +97,12 @@ class SSDTrainer:
             finetune_attention_modules=True,
             finetune_mlp_modules=True,
         )
+        if warm_start_adapter:
+            from peft import PeftModel
+            log.info("Loading warm-start adapter weights from %s", warm_start_adapter)
+            self.model = PeftModel.from_pretrained(
+                self.model.get_base_model(), warm_start_adapter, is_trainable=True
+            )
 
     def _sft_args(self) -> SFTConfig:
         return SFTConfig(
