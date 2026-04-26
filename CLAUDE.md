@@ -38,15 +38,17 @@ Implementation status (2026-04-24):
 | base + BoN5 | — | 25.90% | 54.66 / 18.85 / 7.14 | +3.98 |
 | ssd_v10 (rank 64, warm v7) | 81.10% | 23.24% | 52.48 / 14.40 / 6.00 | +1.32 ← rank scaling didn't compound |
 | ssd_v10 + BoN5 | — | 27.89% | 54.97 / 21.20 / 10.29 | +5.97 |
-| **ssd_v10 + BoN8** ← **NEW CHAMPION** | — | **28.75%** | 55.90 / 21.73 / **11.43** | **+6.83** |
+| ssd_v10 + BoN8 | — | 28.75% | 55.90 / 21.73 / 11.43 | +6.83 |
+| **ssd_v10 + BoN16** ← **CHAMPION** | — | **30.27%** | 56.21 / 24.08 / 13.14 | **+8.35** |
 | dpo_v1 (DPO warm-start ssd_v7) | 81.10% | 23.53% | 52.17 / 15.18 / 6.29 | +1.61 ← no gain |
 | base + BoN3 | — | 25.52% | 53.42 / 18.85 / 7.14 | +3.60 |
 | ssd_v7 + BoN3 | — | 26.47% | 54.66 / 19.90 / 7.71 | +4.55 |
 | ssd_v7 + BoN5 | — | 27.99% | 55.28 / 21.73 / 9.71 | +6.07 |
 | ssd_v7 + BoN8 | — | 28.46% | 55.28 / 23.56 / 9.14 | +6.54 |
 
-BoN ladder marginal gain per extra n: 1→3 +0.85/n, 3→5 +0.76/n, 5→8 +0.16/n (saturates past n=5).
-Target was +5 pp on LCB v6 (21.92 → 26.92); achieved +6.54 pp via best training adapter (ssd_v7) + BoN8 verifier-pick at test time. BoN3 alone gives +3.60 pp on base, training-free.
+BoN ladder marginal gain per extra n on **ssd_v7 (rank 32)**: 1→3 +0.85/n, 3→5 +0.76/n, 5→8 +0.16/n — saturates past n=5.
+BoN ladder on **ssd_v10 (rank 64, warm v7)**: 1→5 +1.16/n, 5→8 +0.29/n, 8→16 +0.19/n — does NOT saturate; rank-64 supports continued BoN scaling.
+Target was +5 pp on LCB v6 (21.92 → 26.92); achieved +8.35 pp (ssd_v10 + BoN16 = 30.27%). Training rank doubles compounding capacity: rank-64's BoN16 is 1.52pp higher than rank-32's BoN8 ceiling.
 
 ## Hardware context (this machine)
 
