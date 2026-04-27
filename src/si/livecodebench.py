@@ -169,37 +169,30 @@ def _run_one_test(prob_id: str, code: str, test: dict, timeout_s: float) -> bool
     return stdout == expected
 
 
-def _check_problem(
-    prob: LCBProblem, code: str, timeout_s: float = 10.0, parallel_tests: int = 8
-) -> bool:
-    """Run completion against every public + private test. Pass = all match.
-
-    parallel_tests > 1 fans out tests via ThreadPoolExecutor and short-circuits
-    on first failure (cancels pending futures). The sandbox-fusion uvicorn
-    workers handle concurrent run_code requests; on a 12-core box ~8 in flight
-    saturates one sandbox container without thrashing.
-    """
+def _check_problem(prob: LCBProblem, code: str, timeout_s: float = 10.0) -> bool:
+    """Run completion against every public + private test, sequentially with
+    early-exit on first failure. Most failed candidates trip on the public test
+    in 1 sandbox call; parallelizing tests within a candidate dispatches all of
+    them and removes the short-circuit, which is a net loss when most candidates
+    fail (measured: 2.2× slower on base LCB at parallel_tests=8)."""
     tests = list(prob.public_tests) + list(prob.private_tests)
     if not tests:
         return False
-    if parallel_tests <= 1 or len(tests) == 1:
-        for t in tests:
-            if not _run_one_test(prob.problem_id, code, t, timeout_s):
-                return False
-        return True
-    workers = min(parallel_tests, len(tests))
-    with ThreadPoolExecutor(max_workers=workers) as ex:
-        futures = [ex.submit(_run_one_test, prob.problem_id, code, t, timeout_s) for t in tests]
-        try:
-            for fut in as_completed(futures):
-                if not fut.result():
-                    for f in futures:
-                        f.cancel()
-                    return False
-        finally:
-            for f in futures:
-                f.cancel()
+    for t in tests:
+        if not _run_one_test(prob.problem_id, code, t, timeout_s):
+            return False
     return True
+
+
+def _solve_problem(
+    prob: LCBProblem, candidates: list[str], timeout_s: float
+) -> tuple[str, bool]:
+    """Run candidates in order with sequential tests; first to pass wins."""
+    for cand in candidates:
+        code = _extract_code(cand)
+        if _check_problem(prob, code, timeout_s=timeout_s):
+            return prob.problem_id, True
+    return prob.problem_id, False
 
 
 def lcb_pass_at_1(
@@ -213,13 +206,18 @@ def lcb_pass_at_1(
     max_completion_tokens: int = 1024,
     timeout_s: float = 10.0,
     n_candidates: int = 1,
-    parallel_tests: int = 8,
+    parallel_problems: int = 8,
 ) -> LCBResult:
     """Generate `n_candidates` completions per LCB problem; pass = ANY candidate passes.
 
     n_candidates>1 implements Best-of-N test-time compute scaling. With our
     sandbox verifier, "best" = "first that passes all tests" — equivalent to
     BoN with a hard verifier. Inference-only; no training cost.
+
+    parallel_problems > 1 fans out across problems (each problem still runs
+    its candidates sequentially with test-level early-exit). This preserves
+    the short-circuit on the common-case fail path while parallelizing the
+    independent across-problem verification work.
     """
     problems = load_lcb(version, data_dir)
     if testtype_filter:
@@ -240,16 +238,22 @@ def lcb_pass_at_1(
 
     per_problem: dict[str, bool] = {}
     per_diff: dict[str, list[int]] = {"easy": [0, 0], "medium": [0, 0], "hard": [0, 0], "unknown": [0, 0]}
+    diff_by_pid = {p.problem_id: p.difficulty for p in problems}
+    if parallel_problems <= 1:
+        results = [_solve_problem(p, c, timeout_s) for p, c in zip(problems, nested, strict=True)]
+    else:
+        with ThreadPoolExecutor(max_workers=parallel_problems) as ex:
+            futures = [
+                ex.submit(_solve_problem, p, c, timeout_s)
+                for p, c in zip(problems, nested, strict=True)
+            ]
+            results = [f.result() for f in futures]
     passed = 0
-    for prob, comp_list in zip(problems, nested, strict=True):
-        ok = False
-        for cand in comp_list:
-            code = _extract_code(cand)
-            if _check_problem(prob, code, timeout_s=timeout_s, parallel_tests=parallel_tests):
-                ok = True
-                break  # any pass = problem passes
-        per_problem[prob.problem_id] = ok
-        d = prob.difficulty if prob.difficulty in per_diff else "unknown"
+    for pid, ok in results:
+        per_problem[pid] = ok
+        d = diff_by_pid.get(pid, "unknown")
+        if d not in per_diff:
+            d = "unknown"
         per_diff[d][1] += 1
         if ok:
             passed += 1
