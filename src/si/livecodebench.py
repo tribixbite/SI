@@ -17,6 +17,7 @@ import logging
 import re
 import time
 import zlib
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -151,32 +152,53 @@ def _build_user_prompt(prob: LCBProblem) -> str:
     return prob.content
 
 
-def _check_problem(prob: LCBProblem, code: str, timeout_s: float = 10.0) -> bool:
-    """Run the completion against every public + private test. Pass = all match."""
+def _run_one_test(prob_id: str, code: str, test: dict, timeout_s: float) -> bool:
+    stdin = test.get("input", "")
+    expected = (test.get("output") or "").strip()
+    req = RunCodeRequest(code=code, language="python", stdin=stdin, run_timeout=timeout_s)
+    try:
+        resp = run_code(req)
+    except Exception as e:
+        log.debug("%s sandbox error: %s", prob_id, e)
+        return False
+    if resp.status != RunStatus.Success:
+        return False
+    stdout = ""
+    if resp.run_result and resp.run_result.stdout is not None:
+        stdout = resp.run_result.stdout.strip()
+    return stdout == expected
+
+
+def _check_problem(
+    prob: LCBProblem, code: str, timeout_s: float = 10.0, parallel_tests: int = 8
+) -> bool:
+    """Run completion against every public + private test. Pass = all match.
+
+    parallel_tests > 1 fans out tests via ThreadPoolExecutor and short-circuits
+    on first failure (cancels pending futures). The sandbox-fusion uvicorn
+    workers handle concurrent run_code requests; on a 12-core box ~8 in flight
+    saturates one sandbox container without thrashing.
+    """
     tests = list(prob.public_tests) + list(prob.private_tests)
     if not tests:
         return False
-    for t in tests:
-        stdin = t.get("input", "")
-        expected = (t.get("output") or "").strip()
-        req = RunCodeRequest(
-            code=code,
-            language="python",
-            stdin=stdin,
-            run_timeout=timeout_s,
-        )
+    if parallel_tests <= 1 or len(tests) == 1:
+        for t in tests:
+            if not _run_one_test(prob.problem_id, code, t, timeout_s):
+                return False
+        return True
+    workers = min(parallel_tests, len(tests))
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futures = [ex.submit(_run_one_test, prob.problem_id, code, t, timeout_s) for t in tests]
         try:
-            resp = run_code(req)
-        except Exception as e:
-            log.debug("%s sandbox error: %s", prob.problem_id, e)
-            return False
-        if resp.status != RunStatus.Success:
-            return False
-        stdout = ""
-        if resp.run_result and resp.run_result.stdout is not None:
-            stdout = resp.run_result.stdout.strip()
-        if stdout != expected:
-            return False
+            for fut in as_completed(futures):
+                if not fut.result():
+                    for f in futures:
+                        f.cancel()
+                    return False
+        finally:
+            for f in futures:
+                f.cancel()
     return True
 
 
@@ -191,6 +213,7 @@ def lcb_pass_at_1(
     max_completion_tokens: int = 1024,
     timeout_s: float = 10.0,
     n_candidates: int = 1,
+    parallel_tests: int = 8,
 ) -> LCBResult:
     """Generate `n_candidates` completions per LCB problem; pass = ANY candidate passes.
 
@@ -222,7 +245,7 @@ def lcb_pass_at_1(
         ok = False
         for cand in comp_list:
             code = _extract_code(cand)
-            if _check_problem(prob, code, timeout_s=timeout_s):
+            if _check_problem(prob, code, timeout_s=timeout_s, parallel_tests=parallel_tests):
                 ok = True
                 break  # any pass = problem passes
         per_problem[prob.problem_id] = ok
