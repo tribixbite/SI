@@ -49,7 +49,7 @@ class GemmaLLM:
         *,
         dtype: str = "bfloat16",
         gpu_memory_utilization: float = 0.85,
-        max_model_len: int = 4096,
+        max_model_len: int = 8192,
         enforce_eager: bool = True,
         cuda_visible_devices: str | None = "1",
         lora_path: str | None = None,

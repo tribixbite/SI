@@ -200,6 +200,7 @@ def anchor(
     benchmark: str = typer.Option("humaneval", help="humaneval | lcb | lcb-functional | lcb-stdin"),
     bon: int = typer.Option(1, help="Best-of-N: generate N candidates per problem; pass if any passes (LCB only)"),
     parallel_problems: int = typer.Option(8, help="LCB-only: number of problems verified concurrently (each runs sequentially internally)"),
+    max_completion_tokens: int = typer.Option(1024, help="LCB-only: max generation tokens per candidate (raise for chain-of-thought models)"),
 ) -> None:
     """Evaluate a branch (adapter or base) on HumanEval+ or LiveCodeBench v6."""
     _setup_logging()
@@ -259,6 +260,7 @@ def anchor(
                 temperature=0.2,
                 n_candidates=bon,
                 parallel_problems=parallel_problems,
+                max_completion_tokens=max_completion_tokens,
             )
             label = f"LCB v6 ({tt or 'all'}, BoN={bon})"
             extra = {"per_difficulty": result.per_difficulty, "bon": bon}
