@@ -44,18 +44,26 @@ run_chunk() {
     # `timeout --foreground --kill-after=30s` sends SIGTERM at the deadline,
     # then SIGKILL 30s later if the process didn't exit. --foreground lets
     # Ctrl-C reach us during interactive runs.
-    if timeout --foreground --kill-after=30s "${CHUNK_TIMEOUT_S}s" \
+    # Capture exit code via && / || to bypass set -e and the if-block's
+    # exit-status reset (which had previously masked failures as rc=0).
+    local rc=0
+    timeout --foreground --kill-after=30s "${CHUNK_TIMEOUT_S}s" \
         env CUDA_VISIBLE_DEVICES=1 /home/matilda/git/SI/.venv/bin/python -m si.cli anchor \
             --benchmark lcb --bon "$BON" --parallel-problems 4 \
             --max-completion-tokens "$MAX_TOK" \
             --problem-offset "$off" --problem-limit "$CHUNK" \
             --model "$MODEL" --out "$out_i" $EXTRA \
-            >> "$log_i" 2>&1
-    then
+            >> "$log_i" 2>&1 || rc=$?
+    # Defense in depth: also require the output JSON to actually exist.
+    # (If python exited 0 but didn't write the file, treat as failure.)
+    if [ "$rc" -eq 0 ] && [ ! -f "$out_i" ]; then
+        rc=125
+        echo "$(date -Is) chunk $i attempt $attempt rc=0 but $out_i missing → treating as failure"
+    fi
+    if [ "$rc" -eq 0 ]; then
         echo "$(date -Is) chunk $i attempt $attempt OK"
         return 0
     fi
-    local rc=$?
     echo "$(date -Is) chunk $i attempt $attempt FAILED rc=$rc"
     return $rc
 }
