@@ -207,6 +207,7 @@ def lcb_pass_at_1(
     timeout_s: float = 10.0,
     n_candidates: int = 1,
     parallel_problems: int = 8,
+    chunk_size: int = 0,
 ) -> LCBResult:
     """Generate `n_candidates` completions per LCB problem; pass = ANY candidate passes.
 
@@ -233,7 +234,24 @@ def lcb_pass_at_1(
     params = GenParams(
         temperature=sampling_temp, top_p=0.95, max_tokens=max_completion_tokens, n=n_candidates
     )
-    nested = llm.chat_batch(user_prompts, params, system=_SYSTEM_LCB)
+    if chunk_size <= 0 or chunk_size >= len(problems):
+        nested = llm.chat_batch(user_prompts, params, system=_SYSTEM_LCB)
+    else:
+        # vLLM 0.19.1 + AWQ + WSL is unreliable on single-batch generations
+        # past ~3h elapsed (cudaErrorUnknown). Split LCB problems into chunks
+        # so each generation call stays well below that threshold. See memory:
+        # project_qwen3coder_blocked.md / project_vllm_long_run_crash.md.
+        nested = []
+        for i in range(0, len(problems), chunk_size):
+            chunk_prompts = user_prompts[i : i + chunk_size]
+            log.info(
+                "LCB chunk %d/%d (%d problems × %d cands)",
+                i // chunk_size + 1,
+                (len(problems) + chunk_size - 1) // chunk_size,
+                len(chunk_prompts),
+                n_candidates,
+            )
+            nested.extend(llm.chat_batch(chunk_prompts, params, system=_SYSTEM_LCB))
     log.info("LCB: generation done in %.1fs", time.time() - t0)
 
     per_problem: dict[str, bool] = {}

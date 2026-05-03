@@ -201,6 +201,7 @@ def anchor(
     bon: int = typer.Option(1, help="Best-of-N: generate N candidates per problem; pass if any passes (LCB only)"),
     parallel_problems: int = typer.Option(8, help="LCB-only: number of problems verified concurrently (each runs sequentially internally)"),
     max_completion_tokens: int = typer.Option(1024, help="LCB-only: max generation tokens per candidate (raise for chain-of-thought models)"),
+    chunk_size: int = typer.Option(0, help="LCB-only: split problems into chunks of this size for vLLM stability (0 = single batch)"),
 ) -> None:
     """Evaluate a branch (adapter or base) on HumanEval+ or LiveCodeBench v6."""
     _setup_logging()
@@ -261,6 +262,7 @@ def anchor(
                 n_candidates=bon,
                 parallel_problems=parallel_problems,
                 max_completion_tokens=max_completion_tokens,
+                chunk_size=chunk_size,
             )
             label = f"LCB v6 ({tt or 'all'}, BoN={bon})"
             extra = {"per_difficulty": result.per_difficulty, "bon": bon}
