@@ -202,6 +202,8 @@ def anchor(
     parallel_problems: int = typer.Option(8, help="LCB-only: number of problems verified concurrently (each runs sequentially internally)"),
     max_completion_tokens: int = typer.Option(1024, help="LCB-only: max generation tokens per candidate (raise for chain-of-thought models)"),
     chunk_size: int = typer.Option(0, help="LCB-only: split problems into chunks of this size for vLLM stability (0 = single batch)"),
+    problem_offset: int = typer.Option(0, help="LCB-only: skip first N problems (for subprocess-chunked anchor)"),
+    problem_limit: int | None = typer.Option(None, help="LCB-only: take only first N problems after offset (for subprocess-chunked anchor)"),
 ) -> None:
     """Evaluate a branch (adapter or base) on HumanEval+ or LiveCodeBench v6."""
     _setup_logging()
@@ -263,6 +265,8 @@ def anchor(
                 parallel_problems=parallel_problems,
                 max_completion_tokens=max_completion_tokens,
                 chunk_size=chunk_size,
+                problem_offset=problem_offset,
+                problem_limit=problem_limit,
             )
             label = f"LCB v6 ({tt or 'all'}, BoN={bon})"
             extra = {"per_difficulty": result.per_difficulty, "bon": bon}
@@ -584,6 +588,60 @@ def phase2(config: str = typer.Option("configs/tier2_26b.yaml")) -> None:
     """Phase 2: multi-branch Elo tournament. Not yet implemented."""
     print("Not yet implemented. See docs/04-implementation.md §2.")
     raise typer.Exit(code=1)
+
+
+@app.command(name="lcb-merge")
+def lcb_merge(
+    inputs: list[str] = typer.Option(..., "--input", help="LCB anchor JSON file (repeat)"),
+    out: str = typer.Option(..., help="merged output JSON path"),
+) -> None:
+    """Merge multiple chunked LCB anchor JSONs into a single result."""
+    import json
+    from pathlib import Path
+
+    merged_per_problem: dict[str, bool] = {}
+    per_diff: dict[str, list[int]] = {"easy": [0, 0], "medium": [0, 0], "hard": [0, 0], "unknown": [0, 0]}
+    total_wall = 0.0
+    bon_vals: set[int] = set()
+    benchmarks: set[str] = set()
+    adapter_seen: str | None = None
+    # We need difficulty for each problem id; load it from the LCB dataset.
+    from si.livecodebench import load_lcb
+    all_probs = load_lcb("release_v6", "/home/matilda/git/SI/cache/livecodebench")
+    diff_by_pid = {p.problem_id: p.difficulty for p in all_probs}
+    for path in inputs:
+        d = json.load(open(path))
+        merged_per_problem.update(d.get("per_problem", {}))
+        total_wall += d.get("wall_s", 0.0)
+        if "bon" in d:
+            bon_vals.add(d["bon"])
+        benchmarks.add(d.get("benchmark", ""))
+        if d.get("adapter"):
+            adapter_seen = d["adapter"]
+    passed = sum(1 for v in merged_per_problem.values() if v)
+    total = len(merged_per_problem)
+    for pid, ok in merged_per_problem.items():
+        diff = diff_by_pid.get(pid, "unknown")
+        if diff not in per_diff:
+            diff = "unknown"
+        per_diff[diff][1] += 1
+        if ok:
+            per_diff[diff][0] += 1
+    out_d = {
+        "adapter": adapter_seen,
+        "benchmark": "+".join(sorted(benchmarks)),
+        "passed": passed,
+        "total": total,
+        "pass_at_1": passed / max(1, total),
+        "wall_s": total_wall,
+        "per_problem": merged_per_problem,
+        "per_difficulty": {k: v for k, v in per_diff.items() if v[1] > 0},
+        "bon": (next(iter(bon_vals)) if len(bon_vals) == 1 else sorted(bon_vals)),
+        "merged_from": inputs,
+    }
+    Path(out).parent.mkdir(parents=True, exist_ok=True)
+    json.dump(out_d, open(out, "w"), indent=2)
+    print(f"[green]merged {len(inputs)} files → {out}[/green]: {passed}/{total} = {passed/max(1,total)*100:.2f}%")
 
 
 if __name__ == "__main__":

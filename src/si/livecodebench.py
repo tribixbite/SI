@@ -208,6 +208,8 @@ def lcb_pass_at_1(
     n_candidates: int = 1,
     parallel_problems: int = 8,
     chunk_size: int = 0,
+    problem_offset: int = 0,
+    problem_limit: int | None = None,
 ) -> LCBResult:
     """Generate `n_candidates` completions per LCB problem; pass = ANY candidate passes.
 
@@ -225,6 +227,9 @@ def lcb_pass_at_1(
         problems = [p for p in problems if p.testtype == testtype_filter]
     if max_problems is not None:
         problems = problems[:max_problems]
+    if problem_offset > 0 or problem_limit is not None:
+        end = problem_offset + (problem_limit or len(problems))
+        problems = problems[problem_offset:end]
 
     t0 = time.time()
     log.info("LCB %s: generating %d × %d completions...", version, len(problems), n_candidates)
