@@ -11,8 +11,11 @@ import logging
 import os
 from dataclasses import dataclass
 
-from vllm import LLM, SamplingParams
-from vllm.lora.request import LoRARequest
+# vLLM imports are lazy (inside GemmaLLM.__init__) so this module can be
+# imported in environments without vLLM installed — e.g. the .venv-sglang
+# parallel environment we use for the SGLang backend. The GenParams dataclass
+# below is the only thing si.livecodebench needs from this module before it
+# picks an LLM backend.
 
 log = logging.getLogger(__name__)
 
@@ -25,7 +28,8 @@ class GenParams:
     n: int = 1
     stop: list[str] | None = None
 
-    def to_vllm(self) -> SamplingParams:
+    def to_vllm(self):
+        from vllm import SamplingParams
         return SamplingParams(
             temperature=self.temperature,
             top_p=self.top_p,
@@ -55,6 +59,8 @@ class GemmaLLM:
         lora_path: str | None = None,
         max_lora_rank: int = 64,
     ) -> None:
+        from vllm import LLM
+        from vllm.lora.request import LoRARequest
         if cuda_visible_devices is not None:
             os.environ.setdefault("CUDA_VISIBLE_DEVICES", cuda_visible_devices)
         log.info("Loading Gemma LLM from %s  lora=%s", model_path, lora_path)
@@ -70,7 +76,7 @@ class GemmaLLM:
             llm_kwargs["max_lora_rank"] = max_lora_rank
             llm_kwargs["max_loras"] = 1
         self.llm = LLM(**llm_kwargs)
-        self._lora_request: LoRARequest | None = None
+        self._lora_request = None
         if lora_path is not None:
             self._lora_request = LoRARequest(
                 lora_name="adapter", lora_int_id=1, lora_path=lora_path

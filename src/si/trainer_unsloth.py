@@ -78,6 +78,16 @@ class UnslothTrainerConfig:
     rlzvp_pos_threshold: float = 0.5  # reward above this is "positive" for sign
     fgrpo_gamma: float | None = 2.0  # None disables F-GRPO focal scaling
     randomize_system_prompt: bool = True
+    # MicroCoder-GRPO recipe (arXiv:2603.07777, Li et al. Mar 2026).
+    # Tuned specifically for LiveCodeBench v6: removes KL pull (beta=0),
+    # widens the asymmetric clip range (epsilon_high > epsilon), and keeps
+    # truncation masking on. Reports +17.6% relative over standard GRPO
+    # baselines on LCB v6 in 300 steps. Set microcoder_grpo=True to apply
+    # these knobs (overrides beta and TRL clip defaults).
+    microcoder_grpo: bool = False
+    microcoder_epsilon: float = 0.2
+    microcoder_epsilon_high: float = 0.5  # paper: 0.4-0.6 sweet spot
+    microcoder_temperature: float = 1.2   # paper: 1.0-1.3; static substitute for diversity-determined
 
 
 def _user_prompt_for(task: Task) -> str:
@@ -251,9 +261,13 @@ class UnslothSITrainer:
         # `epsilon`/`epsilon_high`/`delta`/`loss_type='bnpo'` (those are from
         # TRL 0.22). The sampling knobs (temperature/top_p/top_k) are still
         # available. Other Unsloth-recommended defaults preserved.
-        return GRPOConfig(
+        beta = 0.0 if self.cfg.microcoder_grpo else self.cfg.beta
+        temperature = (
+            self.cfg.microcoder_temperature if self.cfg.microcoder_grpo else 1.0
+        )
+        kwargs = dict(
             output_dir=self.cfg.output_dir,
-            temperature=1.0,
+            temperature=temperature,
             top_p=0.95,
             top_k=64,
             learning_rate=self.cfg.lr,
@@ -268,13 +282,19 @@ class UnslothSITrainer:
             max_steps=self.cfg.max_steps,
             num_train_epochs=self.cfg.epochs,
             max_grad_norm=self.cfg.grad_clip_norm,
-            beta=self.cfg.beta,
+            beta=beta,
             mask_truncated_completions=True,
             save_strategy="no",
             logging_steps=1,
             report_to="none",
             bf16=True,
         )
+        if self.cfg.microcoder_grpo:
+            # Asymmetric clip: allow larger positive updates than negative.
+            # Paper sets epsilon=0.2, epsilon_high=0.4-0.6.
+            kwargs["epsilon"] = self.cfg.microcoder_epsilon
+            kwargs["epsilon_high"] = self.cfg.microcoder_epsilon_high
+        return GRPOConfig(**kwargs)
 
     def train_on_generation(self, outcomes: list[ProposalOutcome]) -> str:
         if not outcomes:
