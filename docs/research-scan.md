@@ -549,3 +549,71 @@ though plain pass@1 is just +1.99pp.
 This argues: **improving training quality should amplify BoN at scale**.
 Hypothesis worth testing: rank=64 LoRA from base with 600 steps may
 beat rank=32+305 v7 by enough that vNEW+BoN8 > 28.46%.
+
+## 2026-05-31 — Returning after 4-week gap: stack refresh + Qwen3.6-27B
+
+WSL had rebooted; ~4 weeks elapsed since the May 3 Qwen3-Coder BoN8 result
+(28.94% LCB v6, -1.33pp behind Gemma champion at 30.27%). Resumed the
+half-finished Qwen3-Coder BoN16 anchor (chunks 0-2 saved, 3 of 14 in flight
+at the time of crash); now running clean via the subprocess-chunked script.
+
+### Stack delta (mid-April → end-May 2026)
+
+**Inference backend — switching from vLLM to SGLang:**
+- vLLM `cudaErrorUnknown` issue #19077 closed "not planned" upstream — won't
+  be fixed in mainline. Nightly still hits it (#31679).
+- SGLang 0.5.12.post1 has day-0 Qwen3.6, Gemma 4, GLM-5.1; AWQ/INT4/GPTQ
+  all supported; confirmed WSL2+CUDA recipe works.
+- Installed into a sibling venv `.venv-sglang` (pin `kernels<0.14`; the 0.15
+  cut broke transformers integration). `src/si/llm_sglang.py` mirrors the
+  GemmaLLM interface so livecodebench.py is backend-agnostic.
+- `scripts/lcb_anchor_sglang.py` provides a standalone CLI entry from the
+  SGLang venv (the main si.cli still uses vLLM via the lazy-import path).
+
+**Base model candidates:**
+- **Qwen3.6-27B Dense** (Apr 22, Apache 2.0, 27.8B dense): downloaded
+  `cyankiwi/Qwen3.6-27B-AWQ-INT4` (20 GB). Estimated LCB v6 tier 50–65% based
+  on Qwen's SWE-Bench positioning. Auto-launching baseline against this model
+  the moment the running BoN16 anchor frees GPU 1.
+- Qwen3.6-35B-A3B MoE (Apr 16): same family as the unstable Qwen3-Coder we
+  fought with; only viable once SGLang validates the WSL+AWQ path on it.
+- LiquidAI LFM2.5-8B-A1B (May 28): novel hybrid arch, Unsloth LoRA support
+  unverified.
+- DeepSeek V4, GLM-5.1, MiMo-V2.5, Step-3.7-Flash, Mistral Medium 3.5,
+  MiniMax-M2.7, Kimi K2.6: all too large for 24GB even at INT4. Skipped.
+
+**Quantization:**
+- AutoRound INT4 + FP8 KV via Red Hat's `llm-compressor` 0.9.0: worth half a
+  day to try on ssd_v10 once on SGLang. Beats AWQ on MoE per Qwen3.6 reports.
+- TurboQuant: not in vLLM mainline; FP8 remains the recommended default.
+
+**Training stack:**
+- Unsloth `use_dora=True`: drop-in upgrade for our LoRA recipe. Added to
+  `SSDTrainerConfig.use_dora` + CLI flag. Plan: re-run ssd_v10 with DoRA.
+- TRL upstreamed `SSDTrainer` and `SDPOTrainer`: TODO diff against our
+  custom impls; adopt if equivalent + supports DoRA.
+- Unsloth pinned a Gemma 4 gradient-accumulation bug in v0.1.36-beta (Apr 8):
+  worth upgrading our pinned version.
+
+**Research worth implementing (delta since April):**
+- **MicroCoder-GRPO** (arXiv:2603.07777, Mar): GRPO recipe tuned for LCB v6,
+  +17.6% relative. Three knobs (no KL, asymmetric clip, high temp) address
+  the exact failures our v2/v3 GRPO hit. Implemented as
+  `UnslothTrainerConfig.microcoder_grpo=True`. 2-3 days to fully test.
+- **SD-Zero** (arXiv:2604.12002, Apr): Generator+Reviser on-policy distillation,
+  successor to our SSD recipe. Likely unsticks the v7→v10 plateau. 3-5 days.
+- **HardTests / EvolveCoder** (arXiv:2505.24098 / 2603.12698): hardened
+  synthetic verifier dataset, +11-17pp precision. Fixes proposer collusion
+  in the AZR loop. HardTests = 1 day drop-in.
+- **Weaver** (arXiv:2506.18203): ensemble of weak verifiers reaches
+  near-oracle BoN. Makes BoN deployable without LCB hidden tests. 3-4 days.
+- **S*** (arXiv:2502.14382): parallel + sequential test-time scaling for
+  code. +1-2pp on LCB. 2-3 days.
+
+Sequence for the next week, in priority order:
+1. Validate SGLang via Qwen3.6-27B baseline (running on supervisor)
+2. If Qwen3.6-27B + BoN8 ≥ 31%, ssd-chain it; else apply MicroCoder-GRPO
+   to Gemma 4 path
+3. HardTests + Weaver to make the verifier honest
+4. SD-Zero if SSD chain saturates on the new base
+
