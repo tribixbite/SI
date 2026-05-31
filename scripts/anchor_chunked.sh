@@ -29,6 +29,12 @@ EXTRA="$@"
 
 CHUNK_TIMEOUT_S=${CHUNK_TIMEOUT_S:-5400}
 MAX_RETRIES=${MAX_RETRIES:-2}
+# Between-chunk CPU cooldown. The verify phase pegs several cores running
+# contest solutions in the sandbox; on a thermally-marginal box a multi-hour
+# run can accumulate heat and trip host thermal protection (two reboots on
+# 2026-05-31). A short idle window between chunks lets the package recover.
+# Set CHUNK_COOLDOWN_S=0 to disable.
+CHUNK_COOLDOWN_S=${CHUNK_COOLDOWN_S:-45}
 
 WORKDIR=$(dirname "$OUT")/$(basename "$OUT" .json)_chunks
 mkdir -p "$WORKDIR"
@@ -95,6 +101,10 @@ for i in $(seq 0 $((N_CHUNKS - 1))); do
     fi
     INPUTS="$INPUTS --input $OUT_I"
     echo "$(date -Is) END chunk $i"
+    if [ "$CHUNK_COOLDOWN_S" -gt 0 ] && [ "$i" -lt "$((N_CHUNKS - 1))" ]; then
+        echo "$(date -Is) cooldown ${CHUNK_COOLDOWN_S}s"
+        sleep "$CHUNK_COOLDOWN_S"
+    fi
 done
 
 /home/matilda/git/SI/.venv/bin/python -m si.cli lcb-merge $INPUTS --out "$OUT"
