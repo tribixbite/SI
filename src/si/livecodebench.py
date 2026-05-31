@@ -136,6 +136,14 @@ def load_lcb(
 
 
 def _extract_code(text: str) -> str:
+    # Strip a reasoning model's thinking block before looking for the answer
+    # fence — otherwise a ```python draft inside <think> would be picked up
+    # instead of the final solution. No-op for non-reasoning models (Gemma,
+    # Qwen-Coder) which emit no <think> tags, so committed anchor scores are
+    # unaffected.
+    close = text.rfind("</think>")
+    if close != -1:
+        text = text[close + len("</think>") :]
     m = _CODE_FENCE.search(text)
     if m is None:
         return text.strip()

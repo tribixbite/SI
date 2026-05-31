@@ -61,6 +61,7 @@ for i in $(seq 0 $((N_CHUNKS - 1))); do
                 --bon 1 \
                 --parallel-problems 4 \
                 --max-completion-tokens 4096 \
+                --no-thinking \
                 --problem-offset "$OFF" --problem-limit "$CHUNK" \
                 --cuda-device 1 \
                 --out "$OUT_I" >> "$LOG_I" 2>&1 || rc=$?

@@ -43,12 +43,20 @@ class SGLangLLM:
         cuda_visible_devices: str | None = "1",
         quantization: str | None = None,  # "awq", "awq_marlin", "gptq", "fp8", None
         chat_template: str | None = None,  # path or built-in name; None = auto-detect
+        enable_thinking: bool | None = None,  # Qwen3-family reasoning toggle; None = template default
     ) -> None:
+        self.enable_thinking = enable_thinking
         if cuda_visible_devices is not None:
             os.environ.setdefault("CUDA_VISIBLE_DEVICES", cuda_visible_devices)
         log.info("Loading SGLangLLM from %s  quant=%s", model_path, quantization)
-        from sglang.srt.server_args import ServerArgs
         from sglang import Engine
+        from transformers import AutoTokenizer
+
+        # SGLang's Engine.generate(text=...) takes raw strings — it does NOT
+        # apply a chat template (that only happens in the OpenAI server
+        # endpoint). We render the chat template ourselves with the HF
+        # tokenizer, matching how GemmaLLM relies on vLLM's .chat() helper.
+        self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
 
         engine_kwargs: dict[str, Any] = {
             "model_path": model_path,
@@ -76,13 +84,16 @@ class SGLangLLM:
         Matches GemmaLLM.chat_batch's return shape exactly so it slots into
         livecodebench.py without changes.
         """
-        conversations = []
+        rendered: list[str] = []
         for p in user_prompts:
             msgs = []
             if system:
                 msgs.append({"role": "system", "content": system})
             msgs.append({"role": "user", "content": p})
-            conversations.append(msgs)
+            tmpl_kwargs: dict[str, Any] = {"tokenize": False, "add_generation_prompt": True}
+            if self.enable_thinking is not None:
+                tmpl_kwargs["enable_thinking"] = self.enable_thinking
+            rendered.append(self.tokenizer.apply_chat_template(msgs, **tmpl_kwargs))
         sampling = {
             "temperature": params.temperature,
             "top_p": params.top_p,
@@ -91,23 +102,15 @@ class SGLangLLM:
         }
         if params.stop:
             sampling["stop"] = params.stop
-        # SGLang's chat endpoint takes prompts as the list of messages and
-        # returns a dict per prompt with `output_ids`/`text`/`meta_info`.
-        # When n>1, the response includes a list of outputs per prompt.
-        outs = self.engine.generate(
-            input_ids=None,
-            sampling_params=sampling,
-            prompt=conversations if isinstance(conversations[0], list) else conversations,
-        )
-        # SGLang returns a list of dicts (one per prompt) when n=1, or a
-        # list of lists when n>1. Normalize to list[list[str]].
-        normalized: list[list[str]] = []
-        for out in outs:
-            if isinstance(out, list):
-                normalized.append([o["text"] for o in out])
-            else:
-                normalized.append([out["text"]])
-        return normalized
+        outs = self.engine.generate(prompt=rendered, sampling_params=sampling)
+        if isinstance(outs, dict):  # single-prompt edge case
+            outs = [outs]
+        # For n>1, SGLang expands the batch block-major (`text = text * n`,
+        # see io_struct.py:_expand_inputs) and returns a FLAT list of B*n
+        # dicts: outs[i + k*B] is the k-th sample of prompt i. Regroup.
+        b = len(rendered)
+        n = params.n
+        return [[outs[i + k * b]["text"] for k in range(n)] for i in range(b)]
 
     def close(self) -> None:
         """Release GPU memory. Important to call between chunked runs."""

@@ -48,6 +48,11 @@ def main() -> None:
     p.add_argument("--gpu-mem-util", type=float, default=0.85)
     p.add_argument("--max-model-len", type=int, default=8192)
     p.add_argument("--cuda-device", default="1")
+    p.add_argument(
+        "--no-thinking",
+        action="store_true",
+        help="Suppress Qwen3-family reasoning trace (apples-to-apples with non-reasoning baselines)",
+    )
     args = p.parse_args()
 
     logging.basicConfig(
@@ -64,6 +69,7 @@ def main() -> None:
             gpu_memory_utilization=args.gpu_mem_util,
             max_model_len=args.max_model_len,
             cuda_visible_devices=args.cuda_device,
+            enable_thinking=False if args.no_thinking else None,
         )
         try:
             result = lcb_pass_at_1(
@@ -92,6 +98,7 @@ def main() -> None:
             "per_problem": result.per_problem,
             "per_difficulty": result.per_difficulty,
             "bon": args.bon,
+            "thinking": not args.no_thinking,
         }
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
         json.dump(out_d, open(args.out, "w"), indent=2)
