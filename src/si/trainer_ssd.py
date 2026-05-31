@@ -43,6 +43,11 @@ class SSDTrainerConfig:
     random_state: int = 3407
     packing: bool = True  # packs multiple samples into max_seq_length for efficiency
     lora_dropout: float = 0.05  # ssd_v2 overfit at 0.0; regularize LoRA deltas
+    # DoRA (Weight-Decomposed LoRA) — Unsloth 2026.04+ has fused kernels that
+    # run DoRA at LoRA speed. arXiv 2512.23165 reports DoRA 46.6% vs full FT
+    # 44.9% on multi-benchmark avg; PiSSA collapses in RLVR but DoRA is stable.
+    # For SSD (positive-only SFT) this is a drop-in upgrade.
+    use_dora: bool = False
 
 
 def samples_to_dataset(samples: list[SSDSample], tokenizer) -> Dataset:
@@ -84,14 +89,19 @@ class SSDTrainer:
             fast_inference=False,
             full_finetuning=False,
         )
-        self.model = FastModel.get_peft_model(
-            self.model,
+        peft_kwargs = dict(
             r=cfg.lora_rank,
             target_modules=r"^.*\blanguage_model\..*\.(q_proj|k_proj|v_proj|o_proj|gate_proj|up_proj|down_proj)$",
             lora_alpha=cfg.lora_rank * 2,
             lora_dropout=cfg.lora_dropout,
             use_gradient_checkpointing="unsloth",
             random_state=cfg.random_state,
+        )
+        if cfg.use_dora:
+            peft_kwargs["use_dora"] = True
+        self.model = FastModel.get_peft_model(
+            self.model,
+            **peft_kwargs,
             finetune_vision_layers=False,
             finetune_language_layers=True,
             finetune_attention_modules=True,
