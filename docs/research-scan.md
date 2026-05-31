@@ -617,3 +617,37 @@ Sequence for the next week, in priority order:
 3. HardTests + Weaver to make the verifier honest
 4. SD-Zero if SSD chain saturates on the new base
 
+## 2026-05-31 (Opus 4.8) — review of 4.7's session + fixes
+
+Reviewed the whole stack on handoff. Two latent bugs in the SGLang path,
+which had never been run end-to-end (it only fires via the supervisor when
+the in-flight BoN16 finishes), plus two untested load-bearing components.
+All fixed in commit cf38659:
+
+- **SGLangLLM.chat_batch was broken two ways.** (a) It passed chat-message
+  dict-lists as `Engine.generate(text=...)`, which takes raw strings — the
+  chat template was never applied (would have produced garbage on the very
+  first Qwen3.6-27B chunk). (b) `n>1` de-interleave was wrong: SGLang
+  block-major repeats the batch (`io_struct._expand_inputs: text = text*n`)
+  and returns a FLAT B*n list; 4.7's normalize made B*n singletons, silently
+  collapsing BoN to n=1. Both fixed + unit-tested. Lesson: the supervisor
+  auto-queue meant a broken path would have burned ~3h before anyone noticed
+  a 0% chunk.
+- **Qwen3.6-27B is a `<think>` reasoning model.** At 4096 tok the trace can
+  eat the whole budget before any code → 0%. Two mitigations: `_extract_code`
+  now strips `<think>...</think>` before fence search (no-op for every model
+  already in the table, so committed scores unchanged), and the baseline runs
+  with `--no-thinking` for apples-to-apples comparison + ~4x speed.
+- **The anchor revert rule had zero tests** despite being the single
+  non-negotiable (CLAUDE.md). Added test_anchor.py (10) + test_islands.py (6).
+
+**Strategic note for the next session:** the project's *stated* thesis is
+compounding self-improvement (AZR self-play + Elo + islands + in-place TTT).
+That middle loop is still NotImplementedError — `loop.solve_and_verify`,
+`run_matches`, `grpo_update`, `_apply_replacement`, `_revert_to`. Everything
+since the +5pp target was hit (Qwen3-Coder, Qwen3.6, BoN ladders) is
+base-model / test-time-compute shopping, *not* the self-improvement loop.
+Worth a deliberate decision: keep shopping for a stronger substrate, or
+commit to building Phase 2 against the chosen base. The revert rule and ring
+migrator are now tested, so Phase 2 can be built on a verified safety floor.
+
