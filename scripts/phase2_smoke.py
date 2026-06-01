@@ -26,8 +26,8 @@ from si.elo import EloSelector  # noqa: E402
 from si.islands import RingMigrator  # noqa: E402
 from si.llm import GemmaLLM  # noqa: E402
 from si.loop import Loop  # noqa: E402
-from si.population import BranchManager  # noqa: E402
 from si.phase2_ops import perturb_lora_adapter  # noqa: E402
+from si.population import BranchManager  # noqa: E402
 from si.proposer import AZRProposer  # noqa: E402
 from si.solver import GemmaSolver  # noqa: E402
 from si.verifier import SandboxContainer, SandboxVerifier  # noqa: E402
