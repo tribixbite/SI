@@ -7,9 +7,12 @@ Orchestrates the four clocks defined in docs/00-overview.md:
   outer loop  (~hours)   — island ring migration, every N generations
   anchor      (~2h)      — held-out eval + commit/revert, every M generations
 
-This file is a skeleton. Each method raises NotImplementedError with a pointer
-to the spec section that defines its contract. Implementations land in Phase 1
-through Phase 4 per docs/04-implementation.md.
+Phase 2 is implemented: the middle/outer/anchor loops drive a population of
+LoRA branches (see si.population.BranchManager) competing via Elo, with
+reseed-on-replacement and snapshot/revert. The two GPU operations — per-branch
+solving and per-branch GRPO — are injected as callbacks (solver_factory,
+trainer_fn) so this orchestration stays testable; the live wiring lands at the
+CLI. Phase 4 (in-place TTT) is still future per docs/04-implementation.md.
 """
 
 from __future__ import annotations
