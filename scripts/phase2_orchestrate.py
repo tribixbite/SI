@@ -33,7 +33,9 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "src"))
 
-from si.phase2_ops import perturb_lora_adapter  # noqa: E402
+import shutil  # noqa: E402
+
+from si.phase2_ops import merged_dir_for, perturb_lora_adapter  # noqa: E402
 
 log = logging.getLogger("phase2_orchestrate")
 PY = sys.executable
@@ -73,6 +75,8 @@ def main() -> None:
     p.add_argument("--train-epochs", type=int, default=1)
     p.add_argument("--cuda-device", default="1")
     p.add_argument("--dry-run", action="store_true", help="fake GPU stages; validate control flow on CPU")
+    p.add_argument("--keep-merged", action="store_true",
+                   help="don't delete per-gen merged models (default deletes to save disk)")
     args = p.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -115,6 +119,15 @@ def main() -> None:
                       "--tasks", str(tasks), "--out", str(res), "--branch-id", bid,
                       "--emit-samples", str(smp), "--cuda-device", args.cuda_device])
             result_args += ["--results", f"{bid}={res}"]
+
+        # Drop this gen's merged models (regenerable; ~15 GB each) so
+        # per-branch-per-gen merges don't fill the disk. Keep the seed's.
+        if not args.dry_run and not args.keep_merged:
+            seed_merged = merged_dir_for(args.seed_adapter)
+            for adapter in set(branches.values()):
+                md = merged_dir_for(adapter)
+                if md != seed_merged and md.exists():
+                    shutil.rmtree(md, ignore_errors=True)
 
         # --- score (Elo + replacement plan) ---
         plan_path = gdir / "plan.json"

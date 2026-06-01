@@ -42,6 +42,15 @@ def resolve_adapter_dir(adapter_path: str) -> str:
     raise FileNotFoundError(f"no adapter_config.json at {p} or {p}/adapter")
 
 
+def merged_dir_for(adapter_path: str) -> Path:
+    """The cache dir ensure_merged_model would use for this adapter (may not
+    exist). Lets the orchestrator delete regenerable merges between generations
+    so per-branch-per-gen merged models don't fill the disk (~15 GB each)."""
+    adapter_dir = resolve_adapter_dir(adapter_path)
+    h = sha256(Path(adapter_dir).resolve().as_posix().encode()).hexdigest()[:16]
+    return _MERGED_ROOT / h
+
+
 def ensure_merged_model(adapter_path: str, base_model: str) -> str:
     """Return a vLLM-loadable merged-model dir for this adapter, merging it into
     the base on first use and caching by adapter-path hash.
@@ -50,8 +59,7 @@ def ensure_merged_model(adapter_path: str, base_model: str) -> str:
     inference goes through a merged checkpoint. Shared by cli.anchor and the
     Phase 2 per-branch solve subprocess. CPU merge (~15 GB RAM, no GPU)."""
     adapter_dir = resolve_adapter_dir(adapter_path)
-    h = sha256(Path(adapter_dir).resolve().as_posix().encode()).hexdigest()[:16]
-    merged = _MERGED_ROOT / h
+    merged = merged_dir_for(adapter_path)
     if not (merged / "config.json").exists():
         log.info("merging adapter %s -> %s", adapter_dir, merged)
         subprocess.check_call(
