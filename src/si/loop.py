@@ -138,33 +138,21 @@ class Loop:
         when the other didn't; equal outcomes are draws (winner=None)."""
         if not tasks:
             return []
+        from si.match import sample_matches
+
         matches: list[Match] = []
         rng = random.Random(self.state.gen)  # reproducible per generation
         mult = self.config.elo.matches_per_generation_multiplier
+        task_ids = [t.task_id for t in tasks]
         for island in islands:
             branches = island.branches
             if len(branches) < 2:
                 continue
-            results = {b.branch_id: self.solve_and_verify(tasks, b) for b in branches}
+            passed = {b.branch_id: self.solve_and_verify(tasks, b) for b in branches}
             n_matches = max(1, round(mult * len(branches)))
-            for _ in range(n_matches):
-                task = rng.choice(tasks)
-                a, b = rng.sample(branches, 2)
-                pa = results[a.branch_id][task.task_id]
-                pb = results[b.branch_id][task.task_id]
-                if pa == pb:
-                    winner: str | None = None
-                else:
-                    winner = a.branch_id if pa else b.branch_id
-                matches.append(
-                    Match(
-                        task_id=task.task_id,
-                        branch_a=a.branch_id,
-                        branch_b=b.branch_id,
-                        winner=winner,
-                        walltime_ms=0,
-                    )
-                )
+            matches.extend(
+                sample_matches([b.branch_id for b in branches], task_ids, passed, n_matches, rng)
+            )
         return matches
 
     def grpo_update(self, islands: list[Island]) -> None:

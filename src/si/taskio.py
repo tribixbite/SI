@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from si.contracts import Task, TaskType
+from si.contracts import EloState, Task, TaskType
 
 
 def task_to_dict(t: Task) -> dict[str, Any]:
@@ -47,3 +47,18 @@ def write_tasks(path: str | Path, tasks: list[Task]) -> None:
 def read_tasks(path: str | Path) -> list[Task]:
     with Path(path).open() as f:
         return [task_from_dict(json.loads(line)) for line in f if line.strip()]
+
+
+def write_elo_state(path: str | Path, state: EloState) -> None:
+    Path(path).write_text(
+        json.dumps({"ratings": state.ratings, "k": state.k, "default_rating": state.default_rating})
+    )
+
+
+def read_elo_state(path: str | Path) -> EloState:
+    """Load persisted Elo (carried across generations). Fresh state if absent."""
+    p = Path(path)
+    if not p.exists():
+        return EloState()
+    d = json.loads(p.read_text())
+    return EloState(ratings=dict(d["ratings"]), k=d["k"], default_rating=d["default_rating"])

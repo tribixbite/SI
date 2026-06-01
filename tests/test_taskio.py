@@ -1,7 +1,14 @@
 """Round-trip tests for Task JSONL (de)serialization."""
 
-from si.contracts import Task, TaskType
-from si.taskio import read_tasks, task_from_dict, task_to_dict, write_tasks
+from si.contracts import EloState, Task, TaskType
+from si.taskio import (
+    read_elo_state,
+    read_tasks,
+    task_from_dict,
+    task_to_dict,
+    write_elo_state,
+    write_tasks,
+)
 
 
 def _task(tid: str, tt: TaskType = TaskType.DEDUCTION) -> Task:
@@ -20,6 +27,19 @@ def test_jsonl_round_trip(tmp_path):
     p = tmp_path / "tasks.jsonl"
     write_tasks(p, tasks)
     assert read_tasks(p) == tasks
+
+
+def test_elo_state_round_trip(tmp_path):
+    s = EloState(ratings={"a": 1612.5, "b": 1487.5}, k=24.0, default_rating=1500.0)
+    p = tmp_path / "elo.json"
+    write_elo_state(p, s)
+    s2 = read_elo_state(p)
+    assert s2.ratings == s.ratings and s2.k == s.k and s2.default_rating == s.default_rating
+
+
+def test_read_elo_state_absent_returns_fresh(tmp_path):
+    s = read_elo_state(tmp_path / "nope.json")
+    assert s.ratings == {} and s.default_rating == 1500.0
 
 
 def test_read_skips_blank_lines(tmp_path):

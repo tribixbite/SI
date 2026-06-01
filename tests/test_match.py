@@ -80,3 +80,25 @@ def test_mc_difficulty_histogram():
     hist = g.mc_difficulty_histogram(bins=10)
     assert hist[0] == 2  # two outcomes at pass_rate 0.0
     assert hist[9] == 2  # two outcomes at pass_rate 1.0
+
+
+def test_sample_matches_winner_rule_and_count():
+    import random as _random
+
+    from si.match import sample_matches
+
+    passed = {
+        "a": {"t1": True, "t2": True},
+        "b": {"t1": False, "t2": False},
+        "c": {"t1": True, "t2": False},
+    }
+    rng = _random.Random(1)
+    ms = sample_matches(["a", "b", "c"], ["t1", "t2"], passed, 12, rng)
+    assert len(ms) == 12
+    for m in ms:
+        pa = passed[m.branch_a][m.task_id]
+        pb = passed[m.branch_b][m.task_id]
+        if pa == pb:
+            assert m.winner is None
+        else:
+            assert m.winner == (m.branch_a if pa else m.branch_b)

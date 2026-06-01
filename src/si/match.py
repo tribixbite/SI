@@ -13,9 +13,10 @@ from __future__ import annotations
 
 import logging
 import math
+import random
 from dataclasses import dataclass, field
 
-from si.contracts import Solution, Task, TaskType, VerifyResult
+from si.contracts import Match, Solution, Task, TaskType, VerifyResult
 from si.proposer import AZRProposer
 from si.solver import GemmaSolver
 from si.verifier import FINAL_REPR_MARKER, SandboxVerifier, _parse_final_repr, _run
@@ -86,6 +87,30 @@ class GenerationResults:
             idx = min(bins - 1, max(0, math.floor(o.pass_rate * bins)))
             hist[idx] += 1
         return hist
+
+
+def sample_matches(
+    branch_ids: list[str],
+    task_ids: list[str],
+    passed: dict[str, dict[str, bool]],
+    n_matches: int,
+    rng: random.Random,
+) -> list[Match]:
+    """Sample n_matches random (task, branch_a, branch_b) triples and score them
+    from a cached pass/fail table (`passed[branch_id][task_id]`). Winner = the
+    branch that passed when the other didn't; equal outcomes draw (winner=None).
+
+    Shared by Loop.run_matches (in-process tournament) and
+    scripts/phase2_score.py (the subprocess orchestrator), so the winner rule
+    has exactly one definition."""
+    matches: list[Match] = []
+    for _ in range(n_matches):
+        tid = rng.choice(task_ids)
+        a, b = rng.sample(branch_ids, 2)
+        pa, pb = passed[a][tid], passed[b][tid]
+        winner = None if pa == pb else (a if pa else b)
+        matches.append(Match(task_id=tid, branch_a=a, branch_b=b, winner=winner, walltime_ms=0))
+    return matches
 
 
 def resolve_proposed_task(task: Task, probe_timeout_s: float = 5.0) -> Task | None:
