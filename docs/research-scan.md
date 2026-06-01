@@ -685,3 +685,25 @@ Qwen3.6 number, the cheapest viable path is: GemmaLLM thinking toggle →
 vLLM via anchor_chunked.sh (retry harness) → BoN1 probe on a strided subset
 before committing to all 1054.
 
+
+## 2026-06-01 (Opus 4.8) — Phase 2 built + inference loop GPU-validated
+
+User chose to build Phase 2 (the self-improvement loop) over more base-model
+shopping. Delivered across commits 273117f..ea41d73:
+- All 5 loop methods implemented (population manager, replacement, revert,
+  solve_and_verify, run_matches, grpo_update) with GPU ops as injected
+  callbacks; 59 GPU-free unit tests incl. the full commit→regression→revert
+  anti-collapse cycle.
+- Real reseed_fn (perturb_lora_adapter, CPU, safetensors-level).
+- scripts/phase2_smoke.py: 1 gen × 2 branches on the REAL GPU →
+  propose→resolve→solve→verify→Elo→reseed all fire, loser reseeded to a valid
+  perturbed adapter on disk. PASS.
+
+**Architecture finding (smoke-caught):** vLLM 0.19.1 can't serve LoRA on
+Gemma4ForConditionalGeneration. Per-branch inference must PEFT-merge adapter→
+base→load merged dir (champion eval already does this). vLLM + Unsloth can't
+co-reside on one 24GB GPU. So live multi-gen Phase 2 = a subprocess
+orchestrator (phase1_loop.sh pattern): per gen → propose → per-branch solve
+subprocess → Elo → per keep/mutate branch train subprocess (SSD on wins) →
+reseed bottom quartile → anchor every N. NEXT: build scripts/phase2_loop.sh +
+the `si phase2-solve` per-branch primitive, incrementally across loop ticks.
