@@ -651,3 +651,37 @@ Worth a deliberate decision: keep shopping for a stronger substrate, or
 commit to building Phase 2 against the chosen base. The revert rule and ring
 migrator are now tested, so Phase 2 can be built on a verified safety floor.
 
+## 2026-06-01 (Opus 4.8) — BoN16 result + Qwen3.6-27B blocked on both backends
+
+**Qwen3-Coder-30B-A3B + BoN16 = 29.89%** (315/1054; easy 55.90 / med 24.87 /
+hard 11.43). That is **0.38pp below the Gemma champion** (ssd_v10+BoN16 =
+30.27%). So even a 30B coder model with BoN16 does not beat the 4B
+Gemma+SSD+BoN16 stack. The "bigger base wins" hypothesis is now answered: no,
+at least not for the coder-MoE class. Full BoN ladder for Qwen3-Coder:
+BoN1 23.72 → BoN8 28.94 → BoN16 29.89 (the 8→16 step gave only +0.95, ~0.12/n
+— saturating, unlike rank-64 Gemma which kept scaling).
+
+**Qwen3.6-27B baseline could not be run — incompatible with both backends:**
+- The downloaded `cyankiwi/Qwen3.6-27B-AWQ-INT4` is, despite the name,
+  **compressed-tensors pack-quantized W4A16**, not AWQ.
+- **SGLang 0.5.12.post1**: `NotImplementedError: No compressed-tensors
+  compatible scheme was found` — this build doesn't implement that scheme.
+  (Also fixed the venv's missing `docker` dep along the way; the SGLang
+  chat_batch fixes from cf38659 are correct but moot until a loadable model.)
+- **vLLM 0.19.1**: loads the weights (15.7 GiB, GPU filled to 22 GiB) but the
+  EngineCore fails to initialize — same WSL CUDA-init flakiness family as the
+  Qwen3-Coder cudaErrorUnknown. *Might* survive the anchor_chunked.sh
+  retry harness (untested), but would need a GemmaLLM `enable_thinking=False`
+  toggle first (Qwen3.6 is a `<think>` model; vLLM .chat() defaults thinking
+  ON → truncates at 4096 → degenerate scores).
+
+**Recommendation / open decision (unchanged and now sharper):** the evidence
+says base-model shopping has low ROI here — the BoN16 loss + the dual-backend
+incompatibility argue against sinking another GPU-day into Qwen3.6-27B. The
+high-value next step is the long-standing fork: **build Phase 2** (the actual
+self-improvement loop, still NotImplementedError) against the proven Gemma
+substrate, on the now-tested revert/migrator safety floor. If we do want the
+Qwen3.6 number, the cheapest viable path is: GemmaLLM thinking toggle →
+vLLM via anchor_chunked.sh (retry harness) → BoN1 probe on a strided subset
+before committing to all 1054.
+

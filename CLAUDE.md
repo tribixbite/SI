@@ -42,6 +42,7 @@ Implementation status (2026-04-24):
 | **ssd_v10 + BoN16** ← **CHAMPION (Gemma path)** | — | **30.27%** | 56.21 / 24.08 / 13.14 | **+8.35** |
 | Qwen3-Coder-30B-A3B base (BoN1, 4k tok) | — | 23.72% | 51.55 / 16.23 / 6.29 | +1.80 ← 30B coder model barely beats 4B |
 | Qwen3-Coder-30B-A3B + BoN8 (chunked) | — | 28.94% | 56.21 / 21.99 / 11.43 | +7.02 ← 1.33pp **below** Gemma champion |
+| Qwen3-Coder-30B-A3B + BoN16 (chunked) | — | 29.89% | 55.90 / 24.87 / 11.43 | +7.97 ← **0.38pp below** Gemma champion even at BoN16; bigger base does not win |
 | dpo_v1 (DPO warm-start ssd_v7) | 81.10% | 23.53% | 52.17 / 15.18 / 6.29 | +1.61 ← no gain |
 | base + BoN3 | — | 25.52% | 53.42 / 18.85 / 7.14 | +3.60 |
 | ssd_v7 + BoN3 | — | 26.47% | 54.66 / 19.90 / 7.71 | +4.55 |
