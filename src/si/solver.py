@@ -42,9 +42,11 @@ class GemmaSolver(Solver):
         branch_id: str = "s0",
         temperature: float = 0.5,
         max_tokens: int = 1024,
+        lora_path: str | None = None,
     ) -> None:
         self.llm = llm
         self.branch_id = branch_id
+        self.lora_path = lora_path  # branch adapter swapped in per chat_batch call
         self.params = GenParams(temperature=temperature, max_tokens=max_tokens)
 
     # ---- Solver protocol ----------------------------------------------------
@@ -55,7 +57,9 @@ class GemmaSolver(Solver):
     def solve_batch(self, tasks: list[Task]) -> list[Solution]:
         prompts = [self._prompt_for(t) for t in tasks]
         t0 = time.time()
-        completions = self.llm.chat_batch(prompts, self.params, system=_SYSTEM_SOLVER)
+        completions = self.llm.chat_batch(
+            prompts, self.params, system=_SYSTEM_SOLVER, lora_path=self.lora_path
+        )
         wall_ms = int((time.time() - t0) * 1000)
         results: list[Solution] = []
         for task, comp_list in zip(tasks, completions, strict=True):
@@ -83,7 +87,7 @@ class GemmaSolver(Solver):
         )
         t0 = time.time()
         completions = self.llm.chat_batch(
-            [self._prompt_for(task)], rollout_params, system=_SYSTEM_SOLVER
+            [self._prompt_for(task)], rollout_params, system=_SYSTEM_SOLVER, lora_path=self.lora_path
         )
         wall_ms = int((time.time() - t0) * 1000)
         return [

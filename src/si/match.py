@@ -88,6 +88,39 @@ class GenerationResults:
         return hist
 
 
+def resolve_proposed_task(task: Task, probe_timeout_s: float = 5.0) -> Task | None:
+    """Turn a raw proposer task into one the solver+verifier can use.
+
+    Deduction tasks (predict output) are ready as-is. Abduction tasks (predict
+    an input producing output O) need O computed by running P(I) in the
+    sandbox. Returns None if the program doesn't run or the type is unsupported.
+    Shared by MatchRunner (Phase 1) and Loop.propose_batch (Phase 2)."""
+    if task.task_type is TaskType.DEDUCTION:
+        if task.program is None or task.input is None:
+            return None
+        return task
+    if task.task_type is TaskType.ABDUCTION:
+        if task.program is None or task.input is None:
+            return None
+        code = f"{task.program}\nprint({FINAL_REPR_MARKER!r}, repr(f({task.input})))"
+        ok, stdout, _, _ = _run(code, probe_timeout_s)
+        if not ok:
+            return None
+        target_out = _parse_final_repr(stdout)
+        if target_out is None:
+            return None
+        return Task(
+            task_type=TaskType.ABDUCTION,
+            program=task.program,
+            input=None,
+            output=target_out,
+            proposer_branch_id=task.proposer_branch_id,
+            gen=task.gen,
+            task_id=task.task_id,
+        )
+    return None
+
+
 class MatchRunner:
     """Runs one generation's worth of self-play matches."""
 
@@ -132,33 +165,7 @@ class MatchRunner:
         return GenerationResults(outcomes=outcomes, failed_proposals=failed)
 
     def _resolve_task(self, task: Task) -> Task | None:
-        """For abduction, the proposer gives (P, I) but the verifier needs
-        (P, O) where O=P(I). Run P(I) in the sandbox to fill O. For deduction,
-        the input is already what the solver needs; leave output=None."""
-        if task.task_type is TaskType.DEDUCTION:
-            if task.program is None or task.input is None:
-                return None
-            return task
-        if task.task_type is TaskType.ABDUCTION:
-            if task.program is None or task.input is None:
-                return None
-            code = f"{task.program}\nprint({FINAL_REPR_MARKER!r}, repr(f({task.input})))"
-            ok, stdout, _, _ = _run(code, self.probe_timeout_s)
-            if not ok:
-                return None
-            target_out = _parse_final_repr(stdout)
-            if target_out is None:
-                return None
-            return Task(
-                task_type=TaskType.ABDUCTION,
-                program=task.program,
-                input=None,
-                output=target_out,
-                proposer_branch_id=task.proposer_branch_id,
-                gen=task.gen,
-                task_id=task.task_id,
-            )
-        return None
+        return resolve_proposed_task(task, self.probe_timeout_s)
 
     def _play(self, task: Task) -> ProposalOutcome:
         solutions = self.solver.solve_rollouts(task, self.mc_rollouts)

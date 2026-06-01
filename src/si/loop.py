@@ -96,13 +96,23 @@ class Loop:
     # ---- inner loop ---------------------------------------------------------
 
     def propose_batch(self) -> list[Task]:
-        """AZR §3.3 proposer — generate proposals across task types."""
-        tasks: list[Task] = []
-        n_per_type = self.config.proposer.proposals_per_generation // 3
-        for task_type in (TaskType.DEDUCTION, TaskType.ABDUCTION, TaskType.INDUCTION):
+        """AZR §3.3 proposer — generate proposals, then resolve them into tasks
+        the solver+verifier can use. Only deduction and abduction are wired
+        (the solver has no induction prompt yet); abduction tasks have their
+        target output filled by running the program in the sandbox."""
+        from si.match import resolve_proposed_task
+
+        task_types = (TaskType.DEDUCTION, TaskType.ABDUCTION)
+        n_per_type = max(1, self.config.proposer.proposals_per_generation // len(task_types))
+        resolved: list[Task] = []
+        for task_type in task_types:
             exp = self._aggregate_experience()
-            tasks.extend(self.proposer.propose(task_type, exp, n_per_type))
-        return tasks
+            for raw in self.proposer.propose(task_type, exp, n_per_type):
+                task = resolve_proposed_task(raw)
+                if task is not None:
+                    resolved.append(task)
+        log.info("propose_batch: %d resolved tasks", len(resolved))
+        return resolved
 
     def solve_and_verify(self, tasks: list[Task], branch: Branch) -> dict[str, bool]:
         """One branch solves every task (with its own LoRA), each is verified,
