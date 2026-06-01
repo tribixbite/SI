@@ -15,6 +15,9 @@ from __future__ import annotations
 
 import logging
 import shutil
+import subprocess
+import sys
+from hashlib import sha256
 from pathlib import Path
 
 import torch
@@ -24,6 +27,39 @@ from safetensors.torch import save_file
 log = logging.getLogger(__name__)
 
 _WEIGHTS_FILE = "adapter_model.safetensors"
+_REPO = Path(__file__).resolve().parent.parent.parent
+_MERGE_SCRIPT = _REPO / "scripts" / "merge_and_anchor.py"
+_MERGED_ROOT = _REPO / "cache" / "_merged"
+
+
+def resolve_adapter_dir(adapter_path: str) -> str:
+    """Trainers save the PEFT adapter at <out>/adapter/; accept either level."""
+    p = Path(adapter_path)
+    if (p / "adapter_config.json").exists():
+        return str(p)
+    if (p / "adapter" / "adapter_config.json").exists():
+        return str(p / "adapter")
+    raise FileNotFoundError(f"no adapter_config.json at {p} or {p}/adapter")
+
+
+def ensure_merged_model(adapter_path: str, base_model: str) -> str:
+    """Return a vLLM-loadable merged-model dir for this adapter, merging it into
+    the base on first use and caching by adapter-path hash.
+
+    vLLM 0.19.1 can't serve LoRA on Gemma4ForConditionalGeneration, so per-branch
+    inference goes through a merged checkpoint. Shared by cli.anchor and the
+    Phase 2 per-branch solve subprocess. CPU merge (~15 GB RAM, no GPU)."""
+    adapter_dir = resolve_adapter_dir(adapter_path)
+    h = sha256(Path(adapter_dir).resolve().as_posix().encode()).hexdigest()[:16]
+    merged = _MERGED_ROOT / h
+    if not (merged / "config.json").exists():
+        log.info("merging adapter %s -> %s", adapter_dir, merged)
+        subprocess.check_call(
+            [sys.executable, str(_MERGE_SCRIPT),
+             "--adapter", adapter_dir, "--merged-out", str(merged),
+             "--base", base_model, "--skip-anchor"]
+        )
+    return str(merged)
 
 
 def perturb_lora_adapter(
