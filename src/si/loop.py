@@ -28,12 +28,14 @@ from si.contracts import (
     Match,
     Migrator,
     Proposer,
+    ReplacementPlan,
     Selector,
     Solver,
     Task,
     TaskType,
     Verifier,
 )
+from si.population import BranchManager
 
 log = logging.getLogger(__name__)
 
@@ -63,6 +65,7 @@ class Loop:
         selector: Selector,
         migrator: Migrator,
         anchor: Anchor,
+        branch_manager: BranchManager | None = None,
     ) -> None:
         self.config = config
         self.proposer = proposer
@@ -71,6 +74,9 @@ class Loop:
         self.selector = selector
         self.migrator = migrator
         self.anchor = anchor
+        # Owns LoRA-branch lineage + snapshot/revert. Required for Phase 2;
+        # left optional so Phase 1 single-branch entrypoints can omit it.
+        self.branch_manager = branch_manager
         self.state = LoopState()
 
     # ---- inner loop ---------------------------------------------------------
@@ -137,6 +143,8 @@ class Loop:
             return False
         self.state.last_anchor = curr
         self.state.committed_gen = self.state.gen
+        if self.branch_manager is not None:
+            self.branch_manager.commit(self.state.gen)
         log.info("ANCHOR COMMIT at gen %d score=%.3f", self.state.gen, curr.aggregate)
         return True
 
@@ -172,11 +180,24 @@ class Loop:
         """For Phase 1: a shared experience pool. Phase 2+: per-island or per-branch."""
         return Experience()
 
-    def _apply_replacement(self, islands: list[Island], plan) -> list[Island]:
-        raise NotImplementedError("Phase 2. Apply ReplacementPlan: delete LoRAs, re-seed from parent + noise.")
+    def _apply_replacement(self, islands: list[Island], plan: ReplacementPlan) -> list[Island]:
+        """Reseed bottom-quartile branches from top-quartile parents + Gaussian
+        noise (docs/04 §2.3.5). The BranchManager mutates the Branch objects in
+        place; islands hold the same references, so membership is preserved and
+        the same list is returned."""
+        if self.branch_manager is None:
+            raise RuntimeError(
+                "Phase 2 requires a BranchManager; construct Loop(..., branch_manager=...) "
+                "from the population's branches. See docs/04-implementation.md §2.2."
+            )
+        self.branch_manager.apply_replacement(plan, self.state.gen, self.state.elo)
+        return islands
 
     def _revert_to(self, gen: int) -> None:
-        raise NotImplementedError(
-            "Phase 2. Revert LoRA checkpoints and experience buffers to committed gen. "
-            "Use VERSIONS.lock to also revert dependency state if needed (docs/01-sources.md)."
-        )
+        """Restore LoRA checkpoints + experience buffers to a committed gen.
+        Pairs with Anchor.should_revert — the anti-collapse non-negotiable."""
+        if self.branch_manager is None:
+            raise RuntimeError(
+                "Phase 2 requires a BranchManager to revert; see docs/04-implementation.md §2.2."
+            )
+        self.branch_manager.revert_to(gen)
