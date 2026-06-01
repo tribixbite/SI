@@ -26,13 +26,22 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "src"))
 
+from si.contracts import TaskType  # noqa: E402
 from si.llm import GemmaLLM  # noqa: E402
 from si.phase2_ops import ensure_merged_model  # noqa: E402
-from si.solver import GemmaSolver  # noqa: E402
+from si.prompts import solver_abduction_prompt, solver_deduction_prompt  # noqa: E402
+from si.solver import _SYSTEM_SOLVER, GemmaSolver  # noqa: E402
+from si.ssd import SSDSample, write_samples  # noqa: E402
 from si.taskio import read_tasks  # noqa: E402
 from si.verifier import SandboxContainer, SandboxVerifier  # noqa: E402
 
 DEFAULT_MODEL = str(REPO / "cache/gemma-4-E4B-hf")
+
+
+def _user_prompt(task) -> str:
+    if task.task_type is TaskType.DEDUCTION:
+        return solver_deduction_prompt(task.program, task.input)
+    return solver_abduction_prompt(task.program, task.output)
 
 
 def main() -> None:
@@ -46,6 +55,8 @@ def main() -> None:
     p.add_argument("--temperature", type=float, default=0.6)
     p.add_argument("--max-tokens", type=int, default=1024)
     p.add_argument("--cuda-device", default="1")
+    p.add_argument("--emit-samples", default=None,
+                   help="also write passing solutions as SSD samples JSONL (for phase2_train)")
     args = p.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -63,15 +74,29 @@ def main() -> None:
         tasks = read_tasks(args.tasks)
         solutions = solver.solve_batch(tasks)
         passed = 0
+        samples: list[SSDSample] = []
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
         with Path(args.out).open("w") as f:
             for task, sol in zip(tasks, solutions, strict=True):
                 vr = verifier.verify(task, sol)
                 passed += int(vr.passed)
                 f.write(json.dumps({"task_id": task.task_id, "passed": vr.passed, "body": sol.body}) + "\n")
+                if vr.passed and args.emit_samples:
+                    samples.append(SSDSample(
+                        task_id=task.task_id,
+                        task_type=task.task_type.value,
+                        prompt_messages=[
+                            {"role": "system", "content": [{"type": "text", "text": _SYSTEM_SOLVER}]},
+                            {"role": "user", "content": [{"type": "text", "text": _user_prompt(task)}]},
+                        ],
+                        completion_text=sol.trace.rstrip(),
+                    ))
     finally:
         container.stop()
 
+    if args.emit_samples:
+        write_samples(samples, args.emit_samples)
+        print(f"  wrote {len(samples)} SSD samples -> {args.emit_samples}")
     print(f"phase2_solve[{args.branch_id}]: {passed}/{len(tasks)} passed -> {args.out}")
 
 
